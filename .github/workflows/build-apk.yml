@@ -27,7 +27,18 @@ jobs:
           gradle-version: '8.9'
 
       - name: Build APK
-        run: gradle assembleRelease
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle assembleRelease --console=plain 2>&1 | tee build.log
+
+      - name: Report build errors
+        if: failure()
+        shell: bash
+        run: |
+          grep -E "error:|e: |What went wrong|FAILURE|Exception|Could not|> " build.log | grep -v "^> Task" | head -20 | while IFS= read -r line; do
+            echo "::error::${line//%/%25}"
+          done
 
       - name: Check the APK
         run: |
