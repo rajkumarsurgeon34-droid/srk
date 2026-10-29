@@ -1,0 +1,51 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'in.shazverse.srk'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'in.shazverse.srk'
+        minSdk 23
+        targetSdk 35
+        versionCode 1
+        versionName '1.0'
+    }
+
+    // A fixed key, so every new build installs over the old one without uninstalling
+    signingConfigs {
+        srk {
+            storeFile file('srk.keystore')
+            storePassword 'srk-store-2026'
+            keyAlias 'srk'
+            keyPassword 'srk-store-2026'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.srk
+        }
+        debug {
+            signingConfig signingConfigs.srk
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    androidResources {
+        noCompress 'js', 'html', 'css'
+    }
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'androidx.core:core:1.13.1'
+    implementation 'androidx.webkit:webkit:1.12.1'
+}

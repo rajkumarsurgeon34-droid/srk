@@ -1,0 +1,52 @@
+name: Build SRK Android APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Build APK
+        run: gradle assembleRelease
+
+      - name: Check the APK
+        run: |
+          APK=app/build/outputs/apk/release/app-release.apk
+          unzip -p "$APK" 'classes*.dex' | grep -a -q 'Lin/shazverse/srk/MainActivity;' || { echo 'ERROR: MainActivity missing'; exit 1; }
+          unzip -l "$APK" | grep -q 'assets/www/index.html' || { echo 'ERROR: app pages missing'; exit 1; }
+          cp "$APK" SRK.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: SRK-apk
+          path: SRK.apk
+          if-no-files-found: error
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v1.0.${{ github.run_number }}" SRK.apk \
+            --title "SRK 1.0 (build ${{ github.run_number }})" \
+            --notes "Download SRK.apk below and open it on your Android phone to install."
