@@ -1,0 +1,27 @@
+name: Verify APKs
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download latest releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download docs-v1.0.1 -R ${{ github.repository }} -p SRK-Docs.apk
+          T=$(gh release list -R ${{ github.repository }} --json tagName -q '[.[].tagName | select(startswith("v1.0."))][0]')
+          gh release download "$T" -R ${{ github.repository }} -p SRK.apk
+      - name: Inspect with Android tools
+        shell: bash
+        run: |
+          BT=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)
+          for A in SRK.apk SRK-Docs.apk; do
+            echo "::notice::== $A size $(stat -c%s $A)"
+            "$BT/apksigner" verify --verbose "$A" 2>&1 | head -8 | while IFS= read -r l; do echo "::notice::$A sign: $l"; done
+            "$BT/aapt2" dump badging "$A" 2>&1 | grep -E "package:|sdkVersion|targetSdk|ERROR|error|launchable" | head -6 | while IFS= read -r l; do echo "::notice::$A badge: ${l//%/%25}"; done
+            "$BT/aapt2" dump xmltree --file AndroidManifest.xml "$A" > m.txt 2>&1 || echo "::error::$A manifest dump failed"
+            grep -iE "error|warn" m.txt | head -5 | while IFS= read -r l; do echo "::warning::$A manifest: $l"; done
+          done
