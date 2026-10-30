@@ -1,0 +1,249 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><style>:root{color-scheme:light}body{margin:0;font:14px system-ui,sans-serif}img{max-width:100%}[hidden]{display:none!important}</style></head><body><title>SRK Docs</title>
+<style>
+/* Layout: one-screen word processor — app bar, ribbon tabs + ribbon, grey desk holding the white sheet, status bar.
+   Start screen: templates as real miniature pages, then recent documents. Shares SRK's blue so the two apps read as a family. */
+:root{
+  --bg:#eceef3; --surface:#ffffff; --sunk:#e2e5ed; --ink:#1b2236; --muted:#5b6380; --line:#d2d7e3;
+  --accent:#2f4fd8; --accent-ink:#ffffff; --accent-soft:#e2e8ff; --desk:#d8dce6; --warn:#b4471b; --ok:#1d7a4f;
+  --mark:#8a93b0; --shadow:0 1px 2px rgb(20 28 60/.10),0 8px 24px rgb(20 28 60/.10);
+  --f-display:"Bricolage Grotesque",system-ui,sans-serif;
+  --f-ui:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#12151f; --surface:#1b2030; --sunk:#151a27; --ink:#e6e9f3; --muted:#9aa2bd; --line:#2c3348;
+  --accent:#7d95ff; --accent-ink:#0f1430; --accent-soft:#252e52; --desk:#0e1119; --warn:#f08a5d; --ok:#5ccf98;
+  --mark:#6a7290; --shadow:0 1px 2px rgb(0 0 0/.4),0 8px 24px rgb(0 0 0/.4); color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#12151f; --surface:#1b2030; --sunk:#151a27; --ink:#e6e9f3; --muted:#9aa2bd; --line:#2c3348;
+  --accent:#7d95ff; --accent-ink:#0f1430; --accent-soft:#252e52; --desk:#0e1119; --warn:#f08a5d; --ok:#5ccf98;
+  --mark:#6a7290; --shadow:0 1px 2px rgb(0 0 0/.4),0 8px 24px rgb(0 0 0/.4); color-scheme:dark}
+html,body{height:100%}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-ui);font-size:15px;line-height:1.45;overflow:hidden}
+*{box-sizing:border-box}
+button,input,select,textarea{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.gut{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.view{height:100%;display:flex;flex-direction:column}
+.view[hidden]{display:none!important}
+
+/* buttons */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:40px;padding:0 14px;border-radius:10px;border:1px solid var(--line);background:var(--surface);cursor:pointer;font-weight:500;font-size:14px;white-space:nowrap;color:var(--ink);text-decoration:none}
+.btn:hover{background:var(--sunk)}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.btn.primary:hover{filter:brightness(1.08)}
+.btn.danger{color:var(--warn)}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+.btn.sm{min-height:34px;padding:0 10px;font-size:13px}
+.ib{display:inline-grid;place-items:center;width:40px;height:40px;border-radius:9px;border:0;background:transparent;cursor:pointer;color:var(--ink);flex:none}
+.ib:hover{background:var(--sunk)}
+.ib svg{width:20px;height:20px}
+.ib[disabled]{opacity:.35;cursor:default}
+.filepick{position:relative;overflow:hidden;cursor:pointer}
+.fileover{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;font-size:60px;margin:0;padding:0}
+.hint{font-size:13px;color:var(--muted);margin:0}
+.err{color:var(--warn);font-size:13px;margin:0}
+.inp{min-height:40px;border:1px solid var(--line);border-radius:9px;background:var(--bg);padding:6px 10px;font-size:15px;color:var(--ink);width:100%;min-width:0}
+label.f{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);min-width:0}
+label.chk{display:flex;align-items:center;gap:8px;font-size:14px;min-height:36px;cursor:pointer}
+label.chk input{width:18px;height:18px;accent-color:var(--accent)}
+
+/* ---------- start screen ---------- */
+.start-scroll{flex:1;min-height:0;overflow:auto;padding-block:20px 40px}
+.start-wrap{max-width:980px;margin:0 auto;display:flex;flex-direction:column;gap:26px}
+.brandrow{display:flex;align-items:center;gap:12px}
+.logo{width:42px;height:42px;border-radius:11px;background:var(--accent);color:var(--accent-ink);display:grid;place-items:center;font-family:var(--f-display);font-weight:800;font-size:13px;letter-spacing:.02em;flex:none}
+.brandrow h1{font-family:var(--f-display);font-weight:800;font-size:26px;margin:0;letter-spacing:-.01em}
+.brandrow p{margin:0;color:var(--muted);font-size:13px}
+.sec h2{font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 10px}
+.tpls{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:14px}
+.tpl{display:flex;flex-direction:column;gap:8px;background:none;border:0;padding:0;cursor:pointer;text-align:left;color:var(--ink)}
+.mini{position:relative;width:100%;aspect-ratio:1/1.414;max-width:100%;background:#fff;border-radius:3px;box-shadow:var(--shadow);overflow:hidden;outline:2px solid transparent;outline-offset:2px;transition:outline-color .15s}
+.tpl:hover .mini,.tpl:focus-visible .mini{outline-color:var(--accent)}
+.mini .scale{position:absolute;left:0;top:0;width:794px;transform-origin:0 0;padding:72px 72px;pointer-events:none}
+.mini.blank{display:grid;place-items:center}
+.mini.blank svg{width:36px;height:36px;color:var(--accent)}
+.tpl b{font-size:13px;font-weight:600}
+.openrow{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.recent{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:12px;background:var(--surface);overflow:hidden}
+.rrow{display:flex;align-items:center;gap:12px;padding:10px 12px;border-top:1px solid var(--line);min-width:0}
+.rrow:first-child{border-top:0}
+.rrow .doci{width:30px;height:38px;flex:none;border-radius:3px;background:var(--accent-soft);color:var(--accent);display:grid;place-items:center;font-family:var(--f-mono);font-size:9px;font-weight:600}
+.rrow .meta{flex:1;min-width:0;cursor:pointer;background:none;border:0;text-align:left;padding:4px 0;color:var(--ink)}
+.rrow .meta b{display:block;font-weight:500;font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rrow .meta small{color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
+.empty{padding:22px 16px;text-align:center;color:var(--muted);font-size:14px}
+.notice{padding:12px 14px;border-radius:12px;background:var(--accent-soft);font-size:13px;line-height:1.45;display:flex;gap:10px;align-items:flex-start}
+
+/* ---------- editor chrome ---------- */
+.bar{display:flex;align-items:center;gap:4px;padding-block:6px;background:var(--surface);border-bottom:1px solid var(--line)}
+.bar .title{flex:1;min-width:60px;border:1px solid transparent;border-radius:8px;background:transparent;padding:6px 8px;font-weight:600;font-size:16px;color:var(--ink);text-overflow:ellipsis}
+.bar .title:hover{border-color:var(--line)}
+.bar .title:focus{border-color:var(--accent);background:var(--bg);outline:none}
+.saved{font-size:12px;color:var(--muted);white-space:nowrap;padding:0 4px}
+@media (max-width:560px){.saved{display:none}}
+.rtabs{display:flex;gap:2px;overflow-x:auto;scrollbar-width:none;background:var(--surface);padding-top:2px}
+.rtabs::-webkit-scrollbar{display:none}
+.rtab{border:0;background:none;padding:8px 12px 7px;font-size:13.5px;font-weight:500;color:var(--muted);border-bottom:2.5px solid transparent;cursor:pointer;white-space:nowrap;flex:none}
+.rtab[aria-selected="true"]{color:var(--accent);border-bottom-color:var(--accent)}
+.rtab.ctx{color:var(--ok)}
+.rtab.ctx[aria-selected="true"]{color:var(--ok);border-bottom-color:var(--ok)}
+.rtab.file{color:var(--accent);font-weight:600}
+.ribbon{display:flex;align-items:stretch;gap:0;overflow-x:auto;background:var(--surface);border-bottom:1px solid var(--line);padding-block:6px;scrollbar-width:thin;min-height:62px}
+.grp{display:flex;flex-direction:column;align-items:stretch;padding:0 8px;border-left:1px solid var(--line);flex:none}
+.grp:first-child{border-left:0;padding-left:0}
+.grp .row{display:flex;align-items:center;gap:2px;flex-wrap:nowrap}
+.grp .gl{font-size:10.5px;color:var(--muted);text-align:center;letter-spacing:.04em;margin-top:2px;white-space:nowrap}
+.rb{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-width:36px;height:36px;padding:0 7px;border:1px solid transparent;border-radius:8px;background:none;cursor:pointer;color:var(--ink);font-size:13px;white-space:nowrap;flex:none}
+.rb:hover{background:var(--sunk)}
+.rb.on{background:var(--accent-soft);border-color:color-mix(in srgb,var(--accent) 45%,transparent)}
+.rb svg{width:19px;height:19px;flex:none}
+.rb .sw{display:block;width:18px;height:4px;border-radius:2px;margin-top:-2px}
+.rb.stack{flex-direction:column;gap:0;line-height:1}
+.rb .caret{width:10px;height:10px;opacity:.6}
+.rsel{height:36px;border:1px solid var(--line);border-radius:8px;background:var(--bg);padding:0 6px;font-size:13.5px;color:var(--ink);flex:none}
+.rsel.font{width:138px}.rsel.size{width:62px}.rsel.style{width:120px}
+.findbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;background:var(--surface);border-bottom:1px solid var(--line);padding-block:6px}
+.findbar .inp{min-height:36px;flex:1 1 140px;width:auto}
+.findbar .cnt{font-size:12px;color:var(--muted);min-width:56px;font-variant-numeric:tabular-nums}
+
+/* desk + sheet */
+.desk{flex:1;min-height:0;overflow:auto;background:var(--desk);position:relative;-webkit-overflow-scrolling:touch}
+.desk.print{padding:24px 16px 60px}
+.sheetwrap{margin:0 auto;width:max-content;max-width:none}
+.desk.mobile .sheetwrap{width:auto}
+.sheet{position:relative;background:#fff;color:#000;box-shadow:var(--shadow);margin:0 auto}
+.desk.mobile .sheet{box-shadow:none;max-width:820px;min-height:100%;padding:22px max(18px,env(safe-area-inset-right,0px)) 120px max(18px,env(safe-area-inset-left,0px))!important;width:auto!important}
+.desk.mobile{background:#fff}
+.hf{position:absolute;left:0;right:0;text-align:center;font-size:9pt;color:#555;white-space:pre-line;cursor:pointer;padding:0 1in;line-height:1.3}
+.hf:empty::before{content:attr(data-empty);color:#b6bccb;font-style:italic}
+.hf:hover{background:rgb(47 79 216/.06)}
+.desk.mobile .hf{display:none}
+.marks{position:absolute;inset:0;pointer-events:none}
+.pmark{position:absolute;left:0;right:0;border-top:1.5px dashed #b3b9cc;height:0}
+.pmark span{position:absolute;right:6px;top:-10px;background:#fff;color:#7a829c;font:500 10.5px var(--f-ui);padding:1px 6px;border:1px solid #d6dae5;border-radius:99px}
+.desk.mobile .marks{display:none}
+#ed{outline:none;min-height:100%;caret-color:#2f4fd8}
+#ed.reading{caret-color:transparent}
+.desk.night,.desk.night .sheet{background:#15171d}
+.desk.night #ed{filter:invert(.9) hue-rotate(180deg)}
+.desk.night #ed img{filter:invert(1) hue-rotate(180deg)}
+.status{display:flex;align-items:center;gap:8px;padding-block:4px;background:var(--surface);border-top:1px solid var(--line);font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums;min-height:38px}
+.status .grow{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.status .ib{width:32px;height:32px}
+.status .zl{min-width:44px;text-align:center}
+.status .vt{border:1px solid var(--line);background:var(--bg);border-radius:8px;padding:3px 9px;font-size:12px;cursor:pointer;color:var(--ink)}
+
+/* popovers + dialogs */
+.pop{position:fixed;z-index:50;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);padding:8px;max-width:calc(100vw - 16px);max-height:70vh;overflow:auto}
+.pop .mi{display:flex;align-items:center;gap:10px;width:100%;border:0;background:none;padding:9px 10px;border-radius:8px;cursor:pointer;text-align:left;font-size:14px;color:var(--ink);white-space:nowrap}
+.pop .mi:hover{background:var(--sunk)}
+.pop .mi.on{background:var(--accent-soft)}
+.pop .mi small{color:var(--muted);margin-left:auto;font-size:12px}
+.pop hr{border:0;border-top:1px solid var(--line);margin:6px 2px}
+.swatches{display:grid;grid-template-columns:repeat(10,24px);gap:4px}
+.swatches button{width:24px;height:24px;border-radius:5px;border:1px solid rgb(0 0 0/.15);cursor:pointer;padding:0}
+.tgrid{display:grid;grid-template-columns:repeat(8,22px);gap:3px}
+.tgrid i{display:block;width:22px;height:22px;border:1px solid var(--line);border-radius:3px;background:var(--bg)}
+.tgrid i.on{background:var(--accent-soft);border-color:var(--accent)}
+.symgrid{display:grid;grid-template-columns:repeat(8,36px);gap:4px}
+.symgrid button{height:36px;border:1px solid var(--line);border-radius:7px;background:var(--bg);cursor:pointer;font-size:17px;color:var(--ink)}
+.dlg-back{position:fixed;inset:0;z-index:60;background:rgb(10 14 30/.45);display:grid;place-items:center;padding:16px}
+.dlg{background:var(--surface);border-radius:16px;box-shadow:var(--shadow);width:min(460px,100%);max-height:calc(100% - 32px);overflow:auto;padding:18px;display:flex;flex-direction:column;gap:14px}
+.dlg h3{margin:0;font-family:var(--f-display);font-weight:600;font-size:20px}
+.dlg .acts{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+.stats{display:grid;grid-template-columns:1fr auto;gap:8px 16px;font-size:14px;margin:0}
+.stats dd{margin:0;font-family:var(--f-mono);text-align:right;font-variant-numeric:tabular-nums}
+.stats dt{color:var(--muted)}
+.filemenu{position:fixed;inset:0;z-index:55;background:var(--bg);display:flex;flex-direction:column}
+.filemenu .fm-scroll{flex:1;overflow:auto;padding-block:16px 40px}
+.fm-wrap{max-width:560px;margin:0 auto;display:flex;flex-direction:column;gap:6px}
+.fm-item{display:flex;align-items:center;gap:14px;padding:12px 14px;border-radius:12px;border:0;background:none;cursor:pointer;text-align:left;color:var(--ink);font-size:15px;width:100%}
+.fm-item:hover{background:var(--surface)}
+.fm-item svg{width:22px;height:22px;color:var(--accent);flex:none}
+.fm-item small{display:block;color:var(--muted);font-size:12.5px}
+.fm-sep{height:1px;background:var(--line);margin:6px 14px}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(56px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);padding:9px 15px;border-radius:10px;font-size:13.5px;z-index:80;max-width:calc(100% - 32px);text-align:center}
+.imgbar{position:absolute;z-index:5}
+.offscreen{position:fixed;left:-10000px;top:0;border:0;background:#fff}
+::highlight(srk-find){background:#ffe36e;color:#000}
+::highlight(srk-cur){background:#ff9b3d;color:#000}
+@media (prefers-reduced-motion:no-preference){.rb,.btn,.ib{transition:background .12s}}
+</style>
+<style id="docStyle"></style>
+
+<!-- ============ START ============ -->
+<section class="view" id="startView">
+  <div class="start-scroll gut">
+    <div class="start-wrap">
+      <div class="brandrow">
+        <div class="logo" aria-hidden="true">SRK</div>
+        <div><h1>SRK Docs</h1><p>Read and edit Word documents</p></div>
+      </div>
+      <div class="notice" id="tipBox" hidden><div><b>Tip:</b> if tapping “Open” does nothing inside the Claude app, open this page’s link in Chrome, or install the SRK Docs app.</div></div>
+      <section class="sec">
+        <h2>Create</h2>
+        <div class="tpls" id="tpls"></div>
+      </section>
+      <section class="sec">
+        <h2>Open</h2>
+        <div class="openrow" id="openRow"></div>
+      </section>
+      <section class="sec">
+        <h2>Recent</h2>
+        <div class="recent" id="recent"><div class="empty">Documents you create or open appear here.</div></div>
+      </section>
+    </div>
+  </div>
+</section>
+
+<!-- ============ EDITOR ============ -->
+<section class="view" id="editView" hidden>
+  <header class="bar gut">
+    <button class="ib" id="homeBtn" type="button" aria-label="Back to documents" title="Back to documents"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>
+    <input class="title" id="docTitle" aria-label="Document name" value="Untitled document" spellcheck="false">
+    <span class="saved" id="savedLbl"></span>
+    <button class="ib" id="undoBtn" type="button" aria-label="Undo" title="Undo (Ctrl+Z)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>
+    <button class="ib" id="redoBtn" type="button" aria-label="Redo" title="Redo (Ctrl+Y)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 14l5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg></button>
+    <button class="ib" id="saveBtn" type="button" aria-label="Save as Word file" title="Save as Word file (Ctrl+S)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10l5 5 5-5"/><path d="M5 20h14"/></svg></button>
+  </header>
+  <nav class="rtabs gut" id="rtabs" role="tablist" aria-label="Ribbon"></nav>
+  <div class="ribbon gut" id="ribbon" role="toolbar"></div>
+  <div class="findbar gut" id="findbar" hidden>
+    <input class="inp" id="findIn" placeholder="Find" aria-label="Find">
+    <input class="inp" id="replIn" placeholder="Replace with" aria-label="Replace with">
+    <span class="cnt" id="findCnt"></span>
+    <button class="btn sm" type="button" id="findPrev" aria-label="Previous match">↑</button>
+    <button class="btn sm" type="button" id="findNext" aria-label="Next match">↓</button>
+    <button class="btn sm" type="button" id="replOne">Replace</button>
+    <button class="btn sm" type="button" id="replAll">Replace all</button>
+    <label class="chk" style="min-height:34px;font-size:13px"><input type="checkbox" id="findCase">Match case</label>
+    <button class="ib" type="button" id="findClose" aria-label="Close find" style="width:34px;height:34px">✕</button>
+  </div>
+  <main class="desk print" id="desk">
+    <div class="sheetwrap" id="sheetwrap">
+      <div class="sheet" id="sheet">
+        <div class="hf" id="hdrBox" data-empty="Add a header" title="Edit header and footer"></div>
+        <div id="ed" class="doc" contenteditable="true" spellcheck="true" role="textbox" aria-multiline="true" aria-label="Document"></div>
+        <div class="hf" id="ftrBox" data-empty="Add a footer" title="Edit header and footer"></div>
+        <div class="marks" id="marks"></div>
+      </div>
+    </div>
+  </main>
+  <footer class="status gut">
+    <span class="grow" id="statTxt">Page 1 of 1</span>
+    <button class="vt" type="button" id="viewToggle">Print layout</button>
+    <button class="ib" type="button" id="zoomOut" aria-label="Zoom out">−</button>
+    <span class="zl" id="zoomLbl">100%</span>
+    <button class="ib" type="button" id="zoomIn" aria-label="Zoom in">+</button>
+  </footer>
+</section>
+<div class="toast" id="toast" hidden></div>
+
+<script src="libs/jszip.min.js"></script>
+<script src="libs/pdf-lib.min.js"></script>
+<script src="native.js"></script>
+<script src="docx.js"></script>
+<script src="editor.js"></script>
+<script src="app.js"></script>
+</body></html>
