@@ -14,20 +14,27 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - name: Inspect with Android tools
+      - name: Compare SRK (installs) with SRK Docs
         shell: bash {0}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          gh release download v1.0.3 -R ${{ github.repository }} -p SRK.apk
           gh release download ${{ inputs.tag }} -R ${{ github.repository }} -p SRK-Docs.apk
           BT=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)
+          for A in SRK SRK-Docs; do
+            "$BT/aapt2" dump xmltree --file AndroidManifest.xml $A.apk > $A.manifest.txt 2>&1
+            "$BT/aapt2" dump resources $A.apk > $A.res.txt 2>&1
+            "$BT/aapt2" dump badging $A.apk > $A.badging.txt 2>&1
+            "$BT/apksigner" verify -v --print-certs $A.apk 2>&1 | grep -v WARNING > $A.sign.txt
+            unzip -lv $A.apk > $A.zip.txt
+          done
           {
-            echo "build-tools: $BT"
-            for A in SRK-Docs.apk; do
-              echo "===== $A size $(stat -c%s $A)"
-              "$BT/apksigner" verify --verbose "$A" 2>&1 | grep -v WARNING
-              echo "--- badging"; "$BT/aapt2" dump badging "$A" 2>&1 | head -40
-              echo "--- manifest"; "$BT/aapt2" dump xmltree --file AndroidManifest.xml "$A" 2>&1
-            done
-          } > apk-report.txt 2>&1
-          gh release upload ${{ inputs.tag }} apk-report.txt --clobber -R ${{ github.repository }}
+            echo "### manifest diff"; diff SRK.manifest.txt SRK-Docs.manifest.txt
+            echo "### badging diff"; diff <(grep -v application-label SRK.badging.txt) <(grep -v application-label SRK-Docs.badging.txt)
+            echo "### signing diff"; diff SRK.sign.txt SRK-Docs.sign.txt
+            echo "### resources diff (types/entries)"; diff <(grep -E "^\s+(type|resource)" SRK.res.txt | sed 's/0x[0-9a-f]*//g' | sort -u) <(grep -E "^\s+(type|resource)" SRK-Docs.res.txt | sed 's/0x[0-9a-f]*//g' | sort -u) | head -80
+            echo "### zip entries not in SRK"; diff <(awk '{print $8}' SRK.zip.txt | sort) <(awk '{print $8}' SRK-Docs.zip.txt | sort) | head -60
+            echo "### stored (uncompressed) entries in SRK-Docs"; awk '$2=="Stored"{print $8}' SRK-Docs.zip.txt | head -40
+          } > compare.txt 2>&1
+          gh release upload ${{ inputs.tag }} compare.txt --clobber -R ${{ github.repository }}
