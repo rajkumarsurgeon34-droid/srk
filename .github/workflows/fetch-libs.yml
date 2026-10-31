@@ -16,7 +16,7 @@ jobs:
           npm pack exceljs@4.4.0 >/dev/null && tar xzf exceljs-4.4.0.tgz && cp package/dist/exceljs.min.js . && rm -rf package *.tgz
           curl -fsSL https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js -o xlsx.full.min.js
           # spelling dictionary
-          npm pack word-list@2.1.0 >/dev/null && tar xzf word-list-*.tgz && cp "$(find package -name '*.txt' | head -1)" words.txt && rm -rf package *.tgz
+          npm pack an-array-of-english-words@2.0.0 >/dev/null && tar xzf an-array-of-english-words-*.tgz && ls package && python3 -c "import json; w=json.load(open('package/index.json')); open('words.txt','w').write('\\n'.join(sorted(set(x.lower() for x in w)))); print(len(w),'words')" && rm -rf package *.tgz
           # countries for the Geography data type
           npm pack world-countries@5.1.0 >/dev/null && tar xzf world-countries-*.tgz && cp package/countries.json wc.json && rm -rf package *.tgz
           for ind in SP.POP.TOTL NY.GDP.MKTP.CD SP.DYN.LE00.IN NY.GDP.PCAP.CD; do curl -fsSL "https://api.worldbank.org/v2/country/all/indicator/$ind?format=json&per_page=400&mrnev=1" -o "wb_$ind.json"; done
