@@ -4,3 +4,4 @@ app/build/
 local.properties
 *.iml
 .idea/
+slides-app/app/src/main/assets/www/fonts/

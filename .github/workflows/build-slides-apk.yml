@@ -30,6 +30,9 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      - name: Download fonts
+        run: python3 fetch_fonts.py
+
       - name: Build APK
         shell: bash
         run: |
@@ -50,6 +53,7 @@ jobs:
           APK=app/build/outputs/apk/release/app-release.apk
           unzip -p "$APK" 'classes*.dex' | grep -a -q 'Lin/shazverse/srkslides/MainActivity;' || { echo 'ERROR: MainActivity missing'; exit 1; }
           unzip -l "$APK" | grep -q 'assets/www/index.html' || { echo 'ERROR: app pages missing'; exit 1; }
+          unzip -l "$APK" | grep -q 'assets/www/fonts/fonts.css' || { echo 'ERROR: fonts missing'; exit 1; }
           cp "$APK" SRK-Slides.apk
 
       - name: Upload APK

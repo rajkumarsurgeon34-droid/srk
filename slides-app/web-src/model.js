@@ -119,7 +119,7 @@ function renderObj(o, deck, th, opts = {}){
   if (o.kind === 'table'){
     const tb = document.createElement('table'); tb.style.cssText = font + `font-size:${o.size || 14}px;--tb:${st.border}`;
     o.rows.forEach((r, ri) => { const tr = tb.insertRow(); if (o.header && ri === 0) tr.className = 'hd';
-      r.forEach((c, ci) => { const td = tr.insertCell(); td.innerHTML = c || ''; const f = (o.fills && o.fills[ri] && o.fills[ri][ci]) || (o.header && ri === 0 ? st.accent : (o.band && ri % 2 === 0 ? 'color-mix(in srgb,' + st.accent + ' 12%, transparent)' : null)); if (f) td.style.background = f; if (o.header && ri === 0) td.style.color = '#FFFFFF'; }); });
+      r.forEach((c, ci) => { const td = tr.insertCell(); td.innerHTML = c || ''; ensureFontsIn(c); const f = (o.fills && o.fills[ri] && o.fills[ri][ci]) || (o.header && ri === 0 ? st.accent : (o.band && ri % 2 === 0 ? 'color-mix(in srgb,' + st.accent + ' 12%, transparent)' : null)); if (f) td.style.background = f; if (o.header && ri === 0) td.style.color = '#FFFFFF'; }); });
     el.appendChild(tb); el.style.height = 'auto'; return el;
   }
   // box
@@ -135,7 +135,7 @@ function renderObj(o, deck, th, opts = {}){
     if (o.vert){ tx.style.writingMode = 'vertical-rl'; }
     const tc = document.createElement('div'); tc.className = 'tc'; tc.style.cssText = font + (o.ph === 'title' || o.ph === 'subtitle' ? 'line-height:1.1;' : '');
     if (o.align) tc.style.textAlign = o.align;
-    tc.innerHTML = hasText ? o.html : (o.html && !o.ph ? o.html : '');
+    tc.innerHTML = hasText ? o.html : (o.html && !o.ph ? o.html : ''); ensureFontsIn(o.html);
     if (o.ph) tc.dataset.prompt = o.prompt || PROMPTS[o.ph] || PROMPTS.body;
     tx.appendChild(tc); el.appendChild(tx);
   }

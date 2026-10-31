@@ -38,7 +38,6 @@ const Editor = (() => {
     cut: S('<circle cx="6" cy="17" r="3"/><circle cx="18" cy="17" r="3"/><path d="M8 15L18 3M16 15L6 3"/>'), paste: S('<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M9 10h6M9 14h6"/>'), copy: S('<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>'),
     replace: S('<path d="M4 7h11l-3-3M20 17H9l3 3"/>'), up: S('<path d="M12 19V5M6 11l6-6 6 6"/>'), down: S('<path d="M12 5v14M6 13l6 6 6-6"/>'), bgimg: S('<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M8 4v16M3 12h5"/>'),
   };
-  const FONTS = ['Calibri', 'Calibri Light', 'Arial', 'Segoe UI', 'Century Gothic', 'Trebuchet MS', 'Verdana', 'Georgia', 'Cambria', 'Garamond', 'Times New Roman', 'Courier New'];
   const SIZES = [8, 9, 10, 10.5, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 44, 48, 54, 60, 66, 72, 80, 88, 96];
   const STD = ['#000000', '#404040', '#7F7F7F', '#BFBFBF', '#FFFFFF', '#C00000', '#FF0000', '#FFC000', '#FFFF00', '#92D050', '#00B050', '#00B0F0', '#0070C0', '#002060', '#7030A0', '#E0603F', '#0F8B8D', '#2F55D4', '#F2A541', '#8C5E3C'];
 
@@ -256,7 +255,7 @@ const Editor = (() => {
     if (E.editing){
       try { st.bold = document.queryCommandState('bold'); st.italic = document.queryCommandState('italic'); st.underline = document.queryCommandState('underline'); st.strike = document.queryCommandState('strikeThrough'); st.ul = document.queryCommandState('insertUnorderedList'); st.ol = document.queryCommandState('insertOrderedList');
         st.align = document.queryCommandState('justifyCenter') ? 'center' : document.queryCommandState('justifyRight') ? 'right' : document.queryCommandState('justifyFull') ? 'justify' : 'left'; } catch(_){}
-      const s = getSelection(); if (s.rangeCount){ let n = s.anchorNode; n = n.nodeType === 1 ? n : n.parentNode; const cs = getComputedStyle(n); st.size = Math.round(parseFloat(cs.fontSize) * 2) / 2; const fam = cs.fontFamily.split(',')[0].replace(/["']/g, '').trim(); st.font = FONTS.find(f => f.toLowerCase() === fam.toLowerCase()) || st.font; }
+      const s = getSelection(); if (s.rangeCount){ let n = s.anchorNode; n = n.nodeType === 1 ? n : n.parentNode; const cs = getComputedStyle(n); st.size = Math.round(parseFloat(cs.fontSize) * 2) / 2; const fam = cs.fontFamily.split(',')[0].replace(/["']/g, '').trim(); st.font = (FONT_MAP[fam.toLowerCase()] || [])[0] || (fam && !/^(roboto|noto sans|noto serif|serif|sans-serif|cursive|monospace)$/i.test(fam) ? fam : st.font); }
     } else {
       st.bold = rs.bold; st.italic = rs.italic; const html = o.html || ''; st.underline = /<u>|underline/.test(html) && false;
       const d = document.createElement('div'); d.innerHTML = html; const bl = [...d.children]; st.ul = bl.length && bl.every(b => b.tagName === 'UL'); st.ol = bl.length && bl.every(b => b.tagName === 'OL');
@@ -405,6 +404,32 @@ const Editor = (() => {
         requestAnimationFrame(() => miniSlide(m, demo, E.deck)); }
       p.append(g); });
   }
+  const RECENT_FONTS = [];
+  let previewsAsked = false;
+  function previewFonts(){ // web: load just the letters of each font's name, so the list shows every font in its own style
+    if (previewsAsked || window.SRK_FONTS_LOCAL) return; previewsAsked = true;
+    const fams = [...new Set(FONT_LIB.map(f => f[1] || f[0]))]; const text = [...new Set(FONT_LIB.map(f => f[0]).join('') + 'Aa')].join('');
+    for (let i = 0; i < fams.length; i += 20){ const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = 'https://fonts.googleapis.com/css2?' + fams.slice(i, i + 20).map(f => 'family=' + encodeURIComponent(f).replace(/%20/g, '+')).join('&') + '&text=' + encodeURIComponent(text) + '&display=swap'; document.head.appendChild(l); }
+  }
+  function fontPicker(anchor, onPick){
+    previewFonts(); const cur = curState().font;
+    pop(anchor, p => {
+      p.classList.add('fontpop');
+      const q = h('input', {class: 'inp', type: 'search', placeholder: 'Search fonts', 'aria-label': 'Search fonts', style: 'margin-bottom:6px'});
+      const list = h('div', {class: 'fontlist'});
+      const item = name => { const b = mi('', name, () => { const ri = RECENT_FONTS.indexOf(name); if (ri >= 0) RECENT_FONTS.splice(ri, 1); RECENT_FONTS.unshift(name); RECENT_FONTS.length = Math.min(RECENT_FONTS.length, 5); onPick(name); }, name === cur);
+        b.querySelector('span').style.fontFamily = fontStack(name); b.querySelector('span').style.fontSize = '16px'; const f = FONT_MAP[name.toLowerCase()]; if (f && f[1]) b.append(h('small', {}, 'shown as ' + f[1])); return b; };
+      const draw = () => {
+        list.innerHTML = ''; const s = q.value.trim().toLowerCase();
+        if (s){ const hits = FONT_LIB.filter(f => f[0].toLowerCase().includes(s) || (f[1] || '').toLowerCase().includes(s) || f[2].toLowerCase().includes(s)); hits.forEach(f => list.append(item(f[0]))); if (!hits.length) list.append(h('p', {class: 'hint', style: 'padding:8px'}, 'No font with that name')); return; }
+        const t = th(); list.append(h('div', {class: 'ph'}, 'Theme fonts'), item(t.head)); if (t.body !== t.head) list.append(item(t.body));
+        if (RECENT_FONTS.length){ list.append(h('div', {class: 'ph'}, 'Recently used')); RECENT_FONTS.forEach(n => list.append(item(n))); }
+        for (const g of ['Office', 'Sans serif', 'Serif', 'Display & handwriting', 'Tamil']){ list.append(h('div', {class: 'ph'}, g === 'Office' ? 'Office fonts' : g)); FONT_LIB.filter(f => f[2] === g).forEach(f => list.append(item(f[0]))); }
+      };
+      q.addEventListener('input', draw); p.append(q, list); draw();
+      requestAnimationFrame(() => { const on = list.querySelector('.mi.on'); if (on) on.scrollIntoView({block: 'center'}); });
+    });
+  }
   function shapePicker(anchor, onPick){ pop(anchor, p => { p.append(h('div', {class: 'ph'}, 'Shapes')); const g = h('div', {class: 'shapegrid'}); for (const [k, n] of SHAPES){ const b = h('button', {type: 'button', title: n, 'aria-label': n, html: shapeIcon(k)}); b.addEventListener('click', () => { closePop(); onPick(k); }); g.append(b); } p.append(g); }); }
   function tablePicker(anchor){
     pop(anchor, p => { const lbl = h('div', {class: 'ph'}, 'Table: 3 × 3'); const g = h('div', {class: 'tgrid'}); const cells = [];
@@ -451,7 +476,7 @@ const Editor = (() => {
   function grp(label, ...kids){ return h('div', {class: 'grp'}, h('div', {class: 'row'}, ...kids), h('div', {class: 'gl'}, label)); }
   function fileBtn(icon, title, accept, fn, opts = {}){ const l = h('label', {class: 'rb filepick', title, 'aria-label': title, html: icon + (opts.label ? `<span>${opts.label}</span>` : '')}); const i = h('input', {type: 'file', accept, class: 'fileover'}); if (opts.capture) i.setAttribute('capture', 'environment'); i.addEventListener('change', () => { const f = i.files[0]; i.value = ''; if (f) fn(f); }); l.append(i); return l; }
   function fontControls(){
-    const fs = h('select', {class: 'rsel font', 'aria-label': 'Font', title: 'Font'}); FONTS.forEach(f => fs.append(h('option', {value: f}, f))); fs.addEventListener('change', () => fmt('font', fs.value)); R.font = fs;
+    const fs = h('button', {class: 'rsel font fontbtn', type: 'button', 'aria-label': 'Font', title: 'Font'}, h('span', {}, 'Font'), h('span', {html: I.caret})); fs.addEventListener('pointerdown', e => e.preventDefault()); fs.addEventListener('click', () => fontPicker(fs, f => fmt('font', f))); R.font = fs;
     const ss = h('select', {class: 'rsel size', 'aria-label': 'Font size', title: 'Font size'}); SIZES.forEach(s => ss.append(h('option', {value: s}, String(s)))); ss.addEventListener('change', () => fmt('size', +ss.value)); R.size = ss;
     return [fs, ss];
   }
@@ -534,7 +559,7 @@ const Editor = (() => {
   }
   function refreshRibbon(){
     const o = selObj(), tx = textual(o), st = curState();
-    if (R.font){ R.font.disabled = !tx; R.size.disabled = !tx; if (!tx){ R.font.value = ''; R.size.value = ''; } if (tx){ if (![...R.font.options].some(x => x.value === st.font)) R.font.append(h('option', {value: st.font}, st.font)); R.font.value = st.font; const sz = String(st.size); if (![...R.size.options].some(x => x.value === sz)) R.size.append(h('option', {value: sz}, sz)); R.size.value = sz; } }
+    if (R.font){ R.font.disabled = !tx; R.size.disabled = !tx; R.font.firstChild.textContent = tx ? st.font : 'Font'; R.font.firstChild.style.fontFamily = tx ? fontStack(st.font) : ''; if (!tx) R.size.value = ''; if (tx){ const sz = String(st.size); if (![...R.size.options].some(x => x.value === sz)) R.size.append(h('option', {value: sz}, sz)); R.size.value = sz; } }
     for (const k of ['bold', 'italic', 'underline', 'strike', 'ul', 'ol']) if (R[k]) R[k].classList.toggle('on', !!st[k]);
     const al = {left: 'al', center: 'ac', right: 'ar', justify: 'aj'}; for (const k of Object.values(al)) if (R[k]) R[k].classList.toggle('on', al[st.align] === k && tx);
     for (const [k, v] of [['vt', 't'], ['vm', 'ctr'], ['vb', 'b']]) if (R[k]){ R[k].classList.toggle('on', !!(o && o.kind === 'box' && (o.anchor || 't') === v)); R[k].disabled = !(o && o.kind === 'box'); }

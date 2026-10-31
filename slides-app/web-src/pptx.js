@@ -2,21 +2,46 @@
 'use strict';
 const EMU = 12700; // EMU per point
 /* Inside slides, CSS px are points: a 16:9 slide is 960 × 540 */
-const FONT_STACKS = {
-  'Calibri': "Calibri, Carlito, 'Segoe UI', Roboto, 'Noto Sans', sans-serif",
-  'Calibri Light': "'Calibri Light', Calibri, Carlito, Roboto, sans-serif",
-  'Arial': "Arial, 'Liberation Sans', Roboto, 'Noto Sans', sans-serif",
-  'Segoe UI': "'Segoe UI', Roboto, 'Noto Sans', sans-serif",
-  'Times New Roman': "'Times New Roman', 'Liberation Serif', 'Noto Serif', Georgia, serif",
-  'Georgia': "Georgia, 'Noto Serif', serif",
-  'Cambria': "Cambria, Caladea, 'Noto Serif', Georgia, serif",
-  'Verdana': "Verdana, 'DejaVu Sans', Roboto, sans-serif",
-  'Trebuchet MS': "'Trebuchet MS', 'DejaVu Sans', Roboto, sans-serif",
-  'Century Gothic': "'Century Gothic', 'URW Gothic', Futura, Roboto, sans-serif",
-  'Garamond': "Garamond, 'EB Garamond', 'Noto Serif', serif",
-  'Courier New': "'Courier New', 'Liberation Mono', 'Droid Sans Mono', monospace",
-};
-function fontStack(name){ name = String(name || 'Calibri').replace(/["']/g, '').trim(); return FONT_STACKS[name] || `'${name.replace(/'/g, '')}', ${/serif|roman|times|georgia|garamond|cambria|book/i.test(name) && !/sans/i.test(name) ? "'Noto Serif', serif" : "Roboto, 'Noto Sans', sans-serif"}`; }
+/* Font library: [name shown and saved in .pptx, free look-alike from Google Fonts (null = the name itself), group, generic fallback] */
+const FONT_LIB = [
+  ['Calibri', 'Carlito', 'Office', 'sans-serif'], ['Calibri Light', 'Carlito', 'Office', 'sans-serif'], ['Cambria', 'Caladea', 'Office', 'serif'],
+  ['Arial', 'Arimo', 'Office', 'sans-serif'], ['Arial Black', 'Archivo Black', 'Office', 'sans-serif'], ['Arial Narrow', 'Archivo Narrow', 'Office', 'sans-serif'],
+  ['Times New Roman', 'Tinos', 'Office', 'serif'], ['Georgia', 'Gelasio', 'Office', 'serif'], ['Garamond', 'EB Garamond', 'Office', 'serif'],
+  ['Book Antiqua', 'Libre Baskerville', 'Office', 'serif'], ['Palatino Linotype', 'Libre Baskerville', 'Office', 'serif'], ['Constantia', 'Source Serif 4', 'Office', 'serif'],
+  ['Century Gothic', 'Didact Gothic', 'Office', 'sans-serif'], ['Segoe UI', 'Open Sans', 'Office', 'sans-serif'], ['Verdana', 'Noto Sans', 'Office', 'sans-serif'],
+  ['Tahoma', 'PT Sans', 'Office', 'sans-serif'], ['Trebuchet MS', 'Fira Sans', 'Office', 'sans-serif'], ['Franklin Gothic', 'Libre Franklin', 'Office', 'sans-serif'],
+  ['Gill Sans', 'Cabin', 'Office', 'sans-serif'], ['Candara', 'Mulish', 'Office', 'sans-serif'], ['Corbel', 'Nunito Sans', 'Office', 'sans-serif'], ['Lucida Sans', 'Source Sans 3', 'Office', 'sans-serif'],
+  ['Rockwell', 'Arvo', 'Office', 'serif'], ['Impact', 'Anton', 'Office', 'sans-serif'], ['Comic Sans MS', 'Comic Neue', 'Office', 'cursive'],
+  ['Courier New', 'Cousine', 'Office', 'monospace'], ['Consolas', 'Inconsolata', 'Office', 'monospace'],
+  ['Roboto', null, 'Sans serif', 'sans-serif'], ['Open Sans', null, 'Sans serif', 'sans-serif'], ['Lato', null, 'Sans serif', 'sans-serif'], ['Montserrat', null, 'Sans serif', 'sans-serif'],
+  ['Poppins', null, 'Sans serif', 'sans-serif'], ['Inter', null, 'Sans serif', 'sans-serif'], ['Raleway', null, 'Sans serif', 'sans-serif'], ['Nunito', null, 'Sans serif', 'sans-serif'],
+  ['Ubuntu', null, 'Sans serif', 'sans-serif'], ['Work Sans', null, 'Sans serif', 'sans-serif'], ['Rubik', null, 'Sans serif', 'sans-serif'], ['Quicksand', null, 'Sans serif', 'sans-serif'],
+  ['Barlow', null, 'Sans serif', 'sans-serif'], ['Josefin Sans', null, 'Sans serif', 'sans-serif'], ['Oswald', null, 'Sans serif', 'sans-serif'], ['Source Sans 3', null, 'Sans serif', 'sans-serif'],
+  ['Merriweather', null, 'Serif', 'serif'], ['Playfair Display', null, 'Serif', 'serif'], ['Lora', null, 'Serif', 'serif'], ['PT Serif', null, 'Serif', 'serif'],
+  ['Noto Serif', null, 'Serif', 'serif'], ['Roboto Slab', null, 'Serif', 'serif'], ['Crimson Text', null, 'Serif', 'serif'], ['Cormorant Garamond', null, 'Serif', 'serif'], ['Libre Baskerville', null, 'Serif', 'serif'],
+  ['Bebas Neue', null, 'Display & handwriting', 'sans-serif'], ['Abril Fatface', null, 'Display & handwriting', 'serif'], ['Lobster', null, 'Display & handwriting', 'cursive'],
+  ['Pacifico', null, 'Display & handwriting', 'cursive'], ['Dancing Script', null, 'Display & handwriting', 'cursive'], ['Great Vibes', null, 'Display & handwriting', 'cursive'],
+  ['Satisfy', null, 'Display & handwriting', 'cursive'], ['Caveat', null, 'Display & handwriting', 'cursive'], ['Kalam', null, 'Display & handwriting', 'cursive'],
+  ['Noto Sans Tamil', null, 'Tamil', 'sans-serif'], ['Noto Serif Tamil', null, 'Tamil', 'serif'], ['Mukta Malar', null, 'Tamil', 'sans-serif'], ['Catamaran', null, 'Tamil', 'sans-serif'],
+  ['Hind Madurai', null, 'Tamil', 'sans-serif'], ['Baloo Thambi 2', null, 'Tamil', 'sans-serif'], ['Pavanam', null, 'Tamil', 'sans-serif'], ['Meera Inimai', null, 'Tamil', 'sans-serif'],
+];
+const FONT_MAP = Object.fromEntries(FONT_LIB.map(f => [f[0].toLowerCase(), f]));
+const fontWeb = name => { const f = FONT_MAP[String(name).toLowerCase()]; return f ? (f[1] || f[0]) : null; };
+/* Google Fonts families to fetch; the app loads its own copies (window.SRK_FONTS_LOCAL), the web page loads them on first use */
+const _fontLoaded = {};
+function ensureFont(name){
+  const fam = fontWeb(name); if (!fam || _fontLoaded[fam] || window.SRK_FONTS_LOCAL || typeof document === 'undefined') return; _fontLoaded[fam] = true;
+  const specs = [':ital,wght@0,400;0,700;1,400;1,700', ':wght@400;700', ''];
+  const tryN = i => { if (i >= specs.length) return; const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(fam).replace(/%20/g, '+')}${specs[i]}&display=swap`; l.onerror = () => { l.remove(); tryN(i + 1); }; document.head.appendChild(l); };
+  tryN(0);
+}
+function fontStack(name){
+  name = String(name || 'Calibri').replace(/["']/g, '').split(',')[0].trim(); const f = FONT_MAP[name.toLowerCase()]; ensureFont(name);
+  if (f) return `'${f[0]}'${f[1] ? `, '${f[1]}'` : ''}, ${f[3] === 'serif' ? "'Noto Serif', serif" : f[3] === 'monospace' ? 'monospace' : f[3] === 'cursive' ? 'cursive' : "Roboto, 'Noto Sans', sans-serif"}`;
+  return `'${name.replace(/'/g, '')}', ${/serif|roman|times|georgia|garamond|cambria|book/i.test(name) && !/sans/i.test(name) ? "'Noto Serif', serif" : "Roboto, 'Noto Sans', sans-serif"}`;
+}
+/* make sure fonts named inside stored text (spans) are loaded too */
+function ensureFontsIn(html){ if (!html || window.SRK_FONTS_LOCAL) return; const re = /font-family:\s*['"]?([^'",;]+)/g; let m; while ((m = re.exec(html))) ensureFont(m[1].trim()); }
 const PNS = { r: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships' };
 const px = s => new DOMParser().parseFromString(s, 'application/xml');
 const lname = el => el && el.localName;

@@ -1,6 +1,8 @@
 /* SRK Slides Android bridge: saving, sharing, files opened from other apps */
 'use strict';
 window.SRK_NATIVE = true;
+window.SRK_FONTS_LOCAL = true; // the font library ships inside the app (fonts/fonts.css)
+(function(){ const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = 'fonts/fonts.css'; document.head.appendChild(l); })();
 window.SRK_LIBS = { html2canvas: 'libs/html2canvas.min.js', pptxgen: 'libs/pptxgen.bundle.js' };
 (function(){
   const toB64 = async blob => { const u = new Uint8Array(await blob.arrayBuffer()); let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };

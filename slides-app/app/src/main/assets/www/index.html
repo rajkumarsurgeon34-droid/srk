@@ -97,7 +97,13 @@ label.f{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:60
 .rb .caret{width:10px;height:10px;opacity:.6}
 .rb .sw{display:block;width:18px;height:4px;border-radius:2px;margin-top:-2px}
 .rsel{height:36px;border:1px solid var(--line);border-radius:8px;background:var(--bg);padding:0 6px;font-size:13.5px;color:var(--ink);flex:none}
-.rsel.font{width:138px}.rsel.size{width:64px}
+.rsel.font{width:150px}
+.fontbtn{display:inline-flex;align-items:center;justify-content:space-between;gap:4px;cursor:pointer;text-align:left}
+.fontbtn span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}
+.fontbtn[disabled]{opacity:.5;cursor:default}
+.fontpop{width:300px;display:flex;flex-direction:column}
+.fontpop .fontlist{overflow:auto;max-height:52vh}
+.fontpop .mi span{overflow:hidden;text-overflow:ellipsis}.rsel.size{width:64px}
 .work{flex:1;min-height:0;display:flex;background:var(--desk)}
 .thumbs{flex:none;overflow:auto;background:var(--surface);border-right:1px solid var(--line);display:flex;flex-direction:column;gap:10px;padding:12px 10px 40px 8px;width:188px}
 .thumb{display:flex;gap:6px;align-items:flex-start;border:0;background:none;padding:0;cursor:pointer;color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums;text-align:left}
