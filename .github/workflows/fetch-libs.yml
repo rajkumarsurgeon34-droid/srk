@@ -14,10 +14,11 @@ jobs:
         run: |
           mkdir libs && cd libs
           npm pack exceljs@4.4.0 >/dev/null && tar xzf exceljs-4.4.0.tgz && cp package/dist/exceljs.min.js . && rm -rf package *.tgz
+          curl -fsSL https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js -o xlsx.full.min.js
           ls -la
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete libs-1 -R ${{ github.repository }} -y --cleanup-tag || true
-          gh release create libs-1 libs/* -R ${{ github.repository }} --title "Libraries" --notes "Third-party libraries used to build the apps." --prerelease
+          gh release delete libs-2 -R ${{ github.repository }} -y --cleanup-tag || true
+          gh release create libs-2 libs/* -R ${{ github.repository }} --title "Libraries" --notes "Third-party libraries used to build the apps." --prerelease
