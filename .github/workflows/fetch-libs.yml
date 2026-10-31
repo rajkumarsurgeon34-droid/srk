@@ -1,0 +1,23 @@
+name: Fetch libraries
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download
+        run: |
+          mkdir libs && cd libs
+          npm pack exceljs@4.4.0 >/dev/null && tar xzf exceljs-4.4.0.tgz && cp package/dist/exceljs.min.js . && rm -rf package *.tgz
+          ls -la
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete libs-1 -R ${{ github.repository }} -y --cleanup-tag || true
+          gh release create libs-1 libs/* -R ${{ github.repository }} --title "Libraries" --notes "Third-party libraries used to build the apps." --prerelease
