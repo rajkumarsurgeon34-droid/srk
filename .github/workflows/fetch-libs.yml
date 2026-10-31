@@ -15,10 +15,42 @@ jobs:
           mkdir libs && cd libs
           npm pack exceljs@4.4.0 >/dev/null && tar xzf exceljs-4.4.0.tgz && cp package/dist/exceljs.min.js . && rm -rf package *.tgz
           curl -fsSL https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js -o xlsx.full.min.js
+          # spelling dictionary
+          npm pack word-list@2.1.0 >/dev/null && tar xzf word-list-*.tgz && cp "$(find package -name '*.txt' | head -1)" words.txt && rm -rf package *.tgz
+          # countries for the Geography data type
+          npm pack world-countries@5.1.0 >/dev/null && tar xzf world-countries-*.tgz && cp package/countries.json wc.json && rm -rf package *.tgz
+          for ind in SP.POP.TOTL NY.GDP.MKTP.CD SP.DYN.LE00.IN NY.GDP.PCAP.CD; do curl -fsSL "https://api.worldbank.org/v2/country/all/indicator/$ind?format=json&per_page=400&mrnev=1" -o "wb_$ind.json"; done
+          # a sample macro-enabled project, to test reading VBA
+          curl -fsSL https://raw.githubusercontent.com/jmcnamara/XlsxWriter/main/examples/vbaProject.bin -o vbaProject.bin || true
+          python3 - <<'PY'
+          import json
+          wc = json.load(open('wc.json'))
+          ind = {}
+          for k, name in [('SP.POP.TOTL','Population'),('NY.GDP.MKTP.CD','GDP (USD)'),('SP.DYN.LE00.IN','Life expectancy'),('NY.GDP.PCAP.CD','GDP per capita (USD)')]:
+              data = json.load(open(f'wb_{k}.json'))[1] or []
+              for d in data:
+                  if d.get('value') is not None and d.get('countryiso3code'):
+                      ind.setdefault(d['countryiso3code'], {})[name] = d['value']; ind[d['countryiso3code']][name + ' year'] = d['date']
+          out = []
+          for c in wc:
+              cur = c.get('currencies') or {}
+              idd = c.get('idd') or {}
+              row = {'Name': c['name']['common'], 'Official name': c['name']['official'], 'Capital': ', '.join(c.get('capital') or []), 'Continent': c.get('region'), 'Region': c.get('subregion'),
+                     'Area (km²)': c.get('area'), 'Currency': ', '.join(v.get('name','') for v in cur.values()), 'Currency code': ', '.join(cur.keys()), 'Currency symbol': ', '.join(v.get('symbol','') for v in cur.values()),
+                     'Languages': ', '.join((c.get('languages') or {}).values()), 'Calling code': (idd.get('root','') + (idd.get('suffixes') or [''])[0]) if len(idd.get('suffixes') or []) == 1 else idd.get('root',''),
+                     'Country code': c.get('cca2'), 'ISO 3': c.get('cca3'), 'Flag': c.get('flag'), 'Latitude': (c.get('latlng') or [None,None])[0], 'Longitude': (c.get('latlng') or [None,None])[1],
+                     'Landlocked': c.get('landlocked'), 'Internet domain': ', '.join(c.get('tld') or []), 'Alt names': [c['cca2'], c['cca3']] + list(c.get('altSpellings') or [])}
+              row.update(ind.get(c.get('cca3'), {}))
+              if row.get('Population') and row.get('Area (km²)'): row['Population density (per km²)'] = round(row['Population'] / row['Area (km²)'], 1)
+              out.append(row)
+          json.dump(out, open('geo.json', 'w'), ensure_ascii=False, separators=(',', ':'))
+          print(len(out), 'countries')
+          PY
+          rm -f wc.json wb_*.json
           ls -la
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete libs-2 -R ${{ github.repository }} -y --cleanup-tag || true
-          gh release create libs-2 libs/* -R ${{ github.repository }} --title "Libraries" --notes "Third-party libraries used to build the apps." --prerelease
+          gh release delete libs-3 -R ${{ github.repository }} -y --cleanup-tag || true
+          gh release create libs-3 libs/* -R ${{ github.repository }} --title "Libraries" --notes "Third-party libraries and data used to build the apps." --prerelease
