@@ -159,6 +159,19 @@ label.f{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:60
 .obj .tc:empty::before{content:attr(data-prompt);opacity:.45}
 .slide.noprompt .obj .tc:empty::before{content:none}
 .slide.noprompt .obj.ph-empty{display:none}
+.obj .imgwrap{position:absolute;inset:0;overflow:hidden}
+.obj .imgborder{position:absolute;inset:0;pointer-events:none;box-sizing:border-box}
+.obj .tc p{margin-bottom:var(--pa,0)}
+.obj .tc li{margin-bottom:var(--pa,.15em)}
+.obj .tc a{color:inherit;text-decoration:underline}
+.obj svg.chart,.obj svg.ink{position:absolute;inset:0;overflow:visible}
+.slide .hf{pointer-events:none;opacity:.75}
+.selbox.multi{border-style:dashed}
+.marq{position:absolute;border:1px dashed #2f4fd8;background:rgb(47 79 216/.08);pointer-events:none;z-index:6}
+.slide.grid{background-image:linear-gradient(rgb(0 0 0/.08) 1px,transparent 1px),linear-gradient(90deg,rgb(0 0 0/.08) 1px,transparent 1px)!important}
+.gridov{position:absolute;inset:0;pointer-events:none;z-index:4;background-image:linear-gradient(rgb(90 100 140/.22) 1px,transparent 1px),linear-gradient(90deg,rgb(90 100 140/.22) 1px,transparent 1px);background-size:24px 24px}
+.thumb.hidden .tmini{opacity:.4}
+.thumb.hidden .tn{text-decoration:line-through}
 .obj img{position:absolute;inset:0;width:100%;height:100%;object-fit:fill;-webkit-user-drag:none;pointer-events:none}
 .obj table{width:100%;border-collapse:collapse;table-layout:fixed}
 .obj td{border:.75px solid var(--tb,#7f7f7f);padding:3px 5px;vertical-align:middle;line-height:1.15;overflow-wrap:break-word}
@@ -234,6 +247,46 @@ label.f{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:60
 @keyframes t-zoom{from{transform:scale(.3);opacity:0}to{transform:none;opacity:1}}
 .tr-fade{animation:t-fade .6s ease both}.tr-push{animation:t-push .55s cubic-bezier(.2,.7,.2,1) both}.tr-wipe{animation:t-wipe .6s ease both}.tr-zoom{animation:t-zoom .55s cubic-bezier(.2,.7,.2,1) both}
 @media (prefers-reduced-motion:reduce){.tr-fade,.tr-push,.tr-wipe,.tr-zoom{animation:none}}
+
+/* ---------- feature UI ---------- */
+.rb .astar{font-size:15px;line-height:1}.astar.in{color:#2e9e5b}.astar.em{color:#d9a400}.astar.out{color:#d64545}
+.animgal{flex-wrap:nowrap}.animgal .lbl{font-size:10.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);padding:0 4px 0 8px;writing-mode:horizontal-tb}
+.grp .lbl{font-size:12px;color:var(--muted);padding:0 2px 0 6px;white-space:nowrap}
+.abadge{position:absolute;left:-10px;top:-10px;min-width:20px;height:20px;border-radius:4px;background:#5b6380;color:#fff;font:600 12px/20px var(--f-ui);text-align:center;transform-origin:0 0;z-index:3;pointer-events:none}
+.animpane{width:320px}.arow{display:flex;align-items:center;gap:6px;padding:4px 2px;border-top:1px solid var(--line)}.arow .astep{width:18px;text-align:right;font-size:12px;color:var(--muted)}.arow .aname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13.5px;cursor:pointer}
+.chartgrid{display:grid;grid-template-columns:repeat(3,112px);gap:8px}.chartgrid button,.smartgrid button,.tstylegrid button{border:1px solid var(--line);border-radius:8px;background:var(--bg);padding:6px;cursor:pointer;display:flex;flex-direction:column;gap:4px;align-items:center;font-size:11.5px;color:var(--ink)}
+.cmini{display:block;width:98px;height:60px;background:#fff;border-radius:3px;color:#333}.cmini svg{width:100%;height:100%}
+.smartgrid{display:grid;grid-template-columns:repeat(3,120px);gap:8px}.smini{display:block;width:104px;height:60px;background:#fff;border-radius:3px}.smini svg{width:100%;height:100%}
+.tstylegrid{display:grid;grid-template-columns:repeat(3,96px);gap:8px}.tsmini{display:grid;grid-template-columns:repeat(3,22px);gap:0;background:#fff;padding:3px}.tsmini i{display:block;height:9px;border:.5px solid #ccc}
+.iconpop{width:320px}.icongrid{display:grid;grid-template-columns:repeat(7,38px);gap:4px;max-height:44vh;overflow:auto}.icongrid button{width:38px;height:38px;border:1px solid var(--line);border-radius:8px;background:var(--bg);cursor:pointer;display:grid;place-items:center;color:var(--ink);padding:7px}.icongrid svg{width:22px;height:22px}
+.symgrid{display:grid;grid-template-columns:repeat(9,32px);gap:3px}.symgrid button{width:32px;height:32px;border:1px solid var(--line);border-radius:6px;background:var(--bg);cursor:pointer;font-size:17px;color:var(--ink);padding:0}
+.palrow{display:inline-flex;gap:2px}.palrow i{display:block;width:12px;height:12px;border-radius:2px}
+.cedit{display:flex;flex-direction:column;gap:10px}.cgrid{overflow:auto;max-height:36vh;border:1px solid var(--line);border-radius:8px}.cgrid table{border-collapse:collapse}.cgrid td{border:1px solid var(--line);padding:0}.cgrid input{width:92px;border:0;padding:6px 8px;background:transparent;font-size:14px;color:var(--ink)}.cgrid tr:first-child input,.cgrid td:first-child input{font-weight:600}
+.chk{display:flex;gap:16px;font-size:14px}.chkrow{display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer}.chkrow input,.chk input{width:18px;height:18px;accent-color:var(--accent)}
+.reusegrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px;max-height:50vh;overflow:auto}.reusegrid button{border:2px solid transparent;border-radius:6px;padding:2px;background:none;cursor:pointer;opacity:.45;display:flex;flex-direction:column;align-items:center;gap:2px;font-size:11px;color:var(--ink)}.reusegrid button.on{border-color:var(--accent);opacity:1}.rumini{position:relative;width:100%;aspect-ratio:16/9;background:#fff;overflow:hidden;border-radius:3px}
+.cropprev{position:relative;max-width:100%;align-self:center;overflow:hidden}.cropprev img{display:block;max-width:100%;max-height:38vh}.cropview{position:absolute;outline:2px solid #fff;box-shadow:0 0 0 9999px rgb(0 0 0/.55)}.cropsl{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px}.cropsl input,.dlg input[type=range]{width:100%;accent-color:var(--accent)}
+.stagewrap.drawing{touch-action:none}.stagewrap.drawing .slide{cursor:crosshair}.stagewrap[data-tool="eraser"] .slide{cursor:cell}
+.slide svg.inklive{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:7;overflow:visible}
+.sorter{position:fixed;inset:0;z-index:58;background:var(--bg);display:flex;flex-direction:column}
+.sgrid{flex:1;overflow:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:16px;padding-block:16px 40px;align-content:start;touch-action:pan-y}
+.scard{display:flex;flex-direction:column;gap:4px;cursor:pointer;user-select:none;-webkit-user-select:none}.scard .smi{position:relative;aspect-ratio:16/9;background:#fff;border-radius:4px;overflow:hidden;box-shadow:var(--shadow);outline:2.5px solid transparent;outline-offset:2px}.scard.cur .smi{outline-color:var(--accent)}.scard.drop .smi{outline:3px dashed var(--show)}.scard.lift{opacity:.6;transform:scale(.96)}.scard.hidden .smi{opacity:.4}
+.scap{display:flex;gap:8px;font-size:12px;color:var(--muted)}
+.outline{flex:1;overflow:auto;padding-block:12px 40px;display:flex;flex-direction:column;gap:10px;max-width:820px;margin:0 auto;width:100%}.orow{display:flex;gap:10px}.onum{width:22px;text-align:right;color:var(--muted);font-size:13px;padding-top:10px}.obox{flex:1;display:flex;flex-direction:column;gap:4px}.otitle{font-weight:600}.obody{resize:vertical;min-height:60px}
+.notespage{width:595px;height:842px;background:#fff;color:#111;padding:54px 54px 40px;display:flex;flex-direction:column;gap:22px;font:13px/1.5 Roboto,'Noto Sans','Noto Sans Tamil',sans-serif;position:relative;box-sizing:border-box}.notespage img{width:100%;border:1px solid #bbb}.nptext{white-space:pre-wrap;flex:1}.npnum{position:absolute;bottom:18px;left:0;right:0;text-align:center;color:#888;font-size:11px}
+/* slide show v2 */
+.show .sarea{position:absolute;inset:0}
+.show .sstage{position:absolute;left:50%;top:50%;overflow:hidden}
+.show .slayer{position:absolute;inset:0;background:#000}.show .slayer.end{display:grid;place-items:center;color:#aaa;font-size:16px}
+.show .sink{position:absolute;inset:0;width:100%;height:100%;z-index:3;pointer-events:none}
+.show .laser{position:fixed;width:16px;height:16px;margin:-8px 0 0 -8px;border-radius:50%;background:#ff2a2a;box-shadow:0 0 12px 4px rgb(255 40 40/.7);pointer-events:none;display:none;z-index:5}
+.show .sblank{position:absolute;inset:0;display:none;z-index:6}
+.show .sctl{z-index:8;flex-wrap:wrap}.show .sctl button{min-width:40px;font-size:16px}.show .sctl button.on{background:var(--show);border-color:var(--show)}.show .scnt{flex:1;font-variant-numeric:tabular-nums}
+.show[data-mode="pen"] .sarea{cursor:crosshair}.show[data-mode="laser"] .sarea{cursor:none}
+.show .pside{display:none}
+.show.presenter .sarea{right:min(34%,360px)}
+.show.presenter .pside{display:flex;flex-direction:column;gap:6px;position:absolute;top:0;right:0;bottom:0;width:min(34%,360px);background:#111;color:#eee;padding:14px 14px 70px;overflow:auto;z-index:4}
+.pside .plbl{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#999;margin-top:6px}.pside .ptimer{font:600 30px var(--f-mono);color:#fff}.pside .pnext{position:relative;aspect-ratio:16/9;background:#222;border-radius:4px;overflow:hidden;color:#888;display:grid;place-items:center;font-size:13px}.pside .pnotes{font-size:16px;line-height:1.5;white-space:pre-wrap}
+.show .snav{position:absolute;inset:0;z-index:9;background:rgb(0 0 0/.85);overflow:auto;padding:20px}.snavgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}.snavgrid button{background:none;border:0;padding:0;cursor:pointer;color:#ddd;display:flex;flex-direction:column;gap:4px;font-size:12px}.snavgrid .smi{position:relative;aspect-ratio:16/9;background:#fff;border-radius:3px;overflow:hidden}.snavgrid button.cur .smi{outline:3px solid var(--show)}
 </style>
 
 <section class="view" id="startView">
@@ -282,7 +335,11 @@ label.f{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:60
 <script src="native.js"></script>
 <script src="pptx.js"></script>
 <script src="themes.js"></script>
+<script src="charts.js"></script>
 <script src="model.js"></script>
 <script src="editor.js"></script>
+<script src="features.js"></script>
+<script src="features2.js"></script>
+<script src="show.js"></script>
 <script src="app.js"></script>
 </body></html>

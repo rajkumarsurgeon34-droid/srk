@@ -42,10 +42,12 @@ const Editor = (() => {
   const STD = ['#000000', '#404040', '#7F7F7F', '#BFBFBF', '#FFFFFF', '#C00000', '#FF0000', '#FFC000', '#FFFF00', '#92D050', '#00B050', '#00B0F0', '#0070C0', '#002060', '#7030A0', '#E0603F', '#0F8B8D', '#2F55D4', '#F2A541', '#8C5E3C'];
 
   /* ---------------------------------------------------------------- state */
-  const E = {deck: null, cur: 0, sel: null, editing: false, zoom: 1, tab: 'home', hist: [], hi: -1, clip: null, onChange: null, savedRange: null, notes: false};
+  const E = {deck: null, cur: 0, sel: null, multi: [], editing: false, painter: null, multiMode: false, tool: null, zoom: 1, tab: 'home', hist: [], hi: -1, clip: null, onChange: null, savedRange: null, notes: false};
   const slide = () => E.deck.slides[E.cur];
   const objOf = id => slide().objects.find(o => o.id === id);
   const selObj = () => E.sel ? objOf(E.sel) : null;
+  const selIds = () => E.sel ? [E.sel, ...E.multi.filter(id => id !== E.sel && objOf(id))] : [];
+  const selObjs = () => selIds().map(objOf).filter(Boolean);
   const th = () => slideTheme(E.deck, slide());
   let slideEl = null, scale = 1;
 
@@ -53,7 +55,7 @@ const Editor = (() => {
   function snapshot(){ const d = E.deck; return JSON.stringify({size: d.size, theme: d.theme, variant: d.variant || 0, themeData: d.themeData, slides: d.slides}); }
   function commit(){ const s = snapshot(); if (E.hist[E.hi] === s) return; E.hist = E.hist.slice(0, E.hi + 1); E.hist.push(s); if (E.hist.length > 80) E.hist.shift(); E.hi = E.hist.length - 1; changed(); }
   function changed(){ E.deck.updated = Date.now(); updUndo(); if (E.onChange) E.onChange(E.deck); }
-  function restoreSnap(s){ const o = JSON.parse(s); Object.assign(E.deck, o); E.cur = Math.min(E.cur, E.deck.slides.length - 1); E.sel = null; E.editing = false; renderAll(); changed(); }
+  function restoreSnap(s){ const o = JSON.parse(s); Object.assign(E.deck, o); E.cur = Math.min(E.cur, E.deck.slides.length - 1); E.sel = null; E.multi = []; E.editing = false; renderAll(); changed(); }
   function undo(){ if (E.editing) endEdit(); if (E.hi > 0){ E.hi--; restoreSnap(E.hist[E.hi]); } }
   function redo(){ if (E.hi < E.hist.length - 1){ E.hi++; restoreSnap(E.hist[E.hi]); } }
   function updUndo(){ $('#undoBtn').disabled = E.hi <= 0; $('#redoBtn').disabled = E.hi >= E.hist.length - 1; }
@@ -70,11 +72,12 @@ const Editor = (() => {
     const so = $('#stageouter'); so.innerHTML = '';
     slideEl = renderSlide(slide(), E.deck, {edit: true}); so.appendChild(slideEl);
     // measure auto-height tables
-    for (const o of slide().objects) if (o.kind === 'table'){ const n = slideEl.querySelector(`.obj[data-id="${o.id}"]`); if (n) o.h = Math.round(n.offsetHeight); }
-    layoutStage(); status();
+    for (const o of slide().objects){ const n = slideEl.querySelector(`.obj[data-id="${o.id}"]`); if (!n) continue; if (o.kind === 'table') o.h = Math.round(n.offsetHeight); else fitTextIn(n, o); }
+    if (E.grid) slideEl.appendChild(h('div', {class: 'gridov'}));
+    layoutStage(); status(); if ((typeof Features !== 'undefined')) Features.markAnims();
   }
   function objEl(id){ return slideEl && slideEl.querySelector(`.obj[data-id="${id}"]`); }
-  function updateObjEl(o){ const n = objEl(o.id); if (!n) return; const fresh = renderObj(o, E.deck, th()); n.replaceWith(fresh); if (o.kind === 'table') o.h = Math.round(fresh.offsetHeight); }
+  function updateObjEl(o){ const n = objEl(o.id); if (!n) return; const fresh = renderObj(o, E.deck, th()); n.replaceWith(fresh); if (o.kind === 'table') o.h = Math.round(fresh.offsetHeight); else if (!E.editing) fitTextIn(fresh, o); }
   function placeObjEl(o){ const n = objEl(o.id); if (!n) return; n.style.left = o.x + 'px'; n.style.top = o.y + 'px'; n.style.width = o.w + 'px'; if (o.kind !== 'table') n.style.height = o.h + 'px'; n.style.transform = objTransform(o);
     const svg = n.querySelector('svg.geo'); if (svg){ svg.setAttribute('viewBox', `0 0 ${Math.max(o.w, .01)} ${Math.max(o.h, .01)}`); svg.firstChild.setAttribute('d', geomPath(o.geom, o.w, o.h)); } }
 
@@ -84,6 +87,7 @@ const Editor = (() => {
     if (!slideEl) return; slideEl.querySelectorAll('.selbox,.guide').forEach(n => n.remove());
     const o = selObj(); if (!o) return;
     const hs = (matchMedia('(pointer:coarse)').matches ? 22 : 13) / scale;
+    if (selIds().length > 1){ for (const q of selObjs()){ const b = h('div', {class: 'selbox multi'}); b.style.cssText = `left:${q.x}px;top:${q.y}px;width:${q.w}px;height:${Math.max(q.h, 0)}px;transform:rotate(${q.rot || 0}deg);border-width:${1.5 / scale}px`; slideEl.appendChild(b); } return; }
     const b = h('div', {class: 'selbox' + (E.editing ? ' editing' : '')}); b.style.cssText = `left:${o.x}px;top:${o.y}px;width:${o.w}px;height:${Math.max(o.h, 0)}px;transform:rotate(${o.rot || 0}deg);--hs:${hs}px;border-width:${1.5 / scale}px`;
     if (!E.editing){
       const list = o.kind === 'table' ? HANDLES.filter(x => x[2] === 0) : HANDLES;
@@ -92,7 +96,9 @@ const Editor = (() => {
     }
     slideEl.appendChild(b);
   }
-  function select(id){ if (E.editing && id !== E.sel) endEdit(); E.sel = id; drawSel(); buildTabs(); refreshRibbon(); }
+  function select(id, keepMulti){ if (E.editing && id !== E.sel) endEdit(); E.sel = id; if (!keepMulti){ const o = id && objOf(id); E.multi = o && o.group ? slide().objects.filter(q => q.group === o.group && q.id !== id).map(q => q.id) : []; } drawSel(); buildTabs(); refreshRibbon(); if ((typeof Features !== 'undefined')) Features.onSelect(); }
+  function selectMany(ids){ if (E.editing) endEdit(); ids = ids.filter(id => objOf(id)); E.sel = ids[0] || null; E.multi = ids.slice(1); drawSel(); buildTabs(); refreshRibbon(); }
+  function toggleSel(id){ const ids = selIds(); const i = ids.indexOf(id); if (i >= 0) ids.splice(i, 1); else { const o = objOf(id); ids.push(id); if (o.group) slide().objects.filter(q => q.group === o.group).forEach(q => { if (!ids.includes(q.id)) ids.push(q.id); }); } selectMany(ids); }
 
   /* pointer interactions */
   let drag = null;
@@ -102,16 +108,21 @@ const Editor = (() => {
     const hd = e.target.closest('.hdl');
     const o = selObj();
     if (hd && o){ e.preventDefault(); startDrag(e, hd.dataset.h, o); return; }
+    if (E.tool && (typeof Features !== 'undefined') && Features.toolDown(e)) return;
     const on = e.target.closest('.obj');
     if (E.editing && on && on.dataset.id === E.sel) return; // native text editing
-    if (!on || !slideEl.contains(on)){ if (E.editing) endEdit(); select(null); return; }
+    if (!on || !slideEl.contains(on)){ if (E.editing) endEdit(); select(null); e.preventDefault(); const p = pt(e); drag = {mode: 'marquee', p0: p, cx: e.clientX, cy: e.clientY, moved: false}; try { $('#stagewrap').setPointerCapture(e.pointerId); } catch(_){} return; }
     const t = objOf(on.dataset.id); if (!t) return;
-    const wasSel = E.sel === t.id;
+    if (E.painter){ e.preventDefault(); applyPainter(t); return; }
+    if (e.shiftKey || e.ctrlKey || e.metaKey || E.multiMode){ e.preventDefault(); toggleSel(t.id); if (selIds().includes(t.id)) startDrag(e, 'move', t, false); return; }
+    const inSel = selIds().includes(t.id) && selIds().length > 1;
+    const wasSel = E.sel === t.id && selIds().length === 1;
+    if (inSel){ e.preventDefault(); startDrag(e, 'move', t, false); return; }
     if (!wasSel) select(t.id); else if (E.editing) endEdit();
-    e.preventDefault(); startDrag(e, 'move', t, wasSel);
+    e.preventDefault(); startDrag(e, 'move', t, wasSel && !t.group);
   }
   function startDrag(e, mode, o, wasSel){
-    const p = pt(e); drag = {mode, id: o.id, p0: p, o0: {...o}, moved: false, wasSel, cx: e.clientX, cy: e.clientY, pid: e.pointerId};
+    const p = pt(e); drag = {mode, id: o.id, p0: p, o0: {...o}, moved: false, wasSel, cx: e.clientX, cy: e.clientY, pid: e.pointerId, others: mode === 'move' ? selObjs().filter(q => q.id !== o.id).map(q => ({q, x: q.x, y: q.y})) : []};
     try { $('#stagewrap').setPointerCapture(e.pointerId); } catch(_){}
   }
   function guidesFor(o, axis){
@@ -128,13 +139,19 @@ const Editor = (() => {
     if (gx != null){ const g = h('div', {class: 'guide'}); g.style.cssText = `left:${gx - t / 2}px;top:0;width:${t}px;height:${H}px`; slideEl.appendChild(g); }
     if (gy != null){ const g = h('div', {class: 'guide'}); g.style.cssText = `top:${gy - t / 2}px;left:0;height:${t}px;width:${W}px`; slideEl.appendChild(g); } }
   function onMove(e){
-    if (!drag) return; const o = objOf(drag.id); if (!o) return;
+    if (!drag) return;
+    if (drag.mode === 'marquee'){ if (!drag.moved && Math.hypot(e.clientX - drag.cx, e.clientY - drag.cy) < 6) return; drag.moved = true; const p = pt(e), x = Math.min(p.x, drag.p0.x), y = Math.min(p.y, drag.p0.y), w = Math.abs(p.x - drag.p0.x), hh = Math.abs(p.y - drag.p0.y);
+      let m = slideEl.querySelector('.marq'); if (!m){ m = h('div', {class: 'marq'}); slideEl.appendChild(m); } m.style.cssText = `left:${x}px;top:${y}px;width:${w}px;height:${hh}px;border-width:${1 / scale}px`; drag.box = {x, y, w, h: hh}; return; }
+    if (drag.mode === 'tool'){ if ((typeof Features !== 'undefined')) Features.toolMove(e, pt(e)); return; }
+    const o = objOf(drag.id); if (!o) return;
     if (!drag.moved && Math.hypot(e.clientX - drag.cx, e.clientY - drag.cy) < 4) return;
     drag.moved = true; const p = pt(e), dx = p.x - drag.p0.x, dy = p.y - drag.p0.y, o0 = drag.o0;
     if (drag.mode === 'move'){
       let nx = o0.x + dx, ny = o0.y + dy, gx = null, gy = null;
       if (!e.altKey){ const sx = snap(o, 'x', nx, o.w); if (sx){ nx += sx.d; gx = sx.L; } const sy = snap(o, 'y', ny, o.h); if (sy){ ny += sy.d; gy = sy.L; } }
-      o.x = Math.round(nx * 10) / 10; o.y = Math.round(ny * 10) / 10; placeObjEl(o); drawSel(); showGuides(gx, gy); return;
+      o.x = Math.round(nx * 10) / 10; o.y = Math.round(ny * 10) / 10; placeObjEl(o);
+      for (const r of drag.others){ r.q.x = Math.round((r.x + o.x - o0.x) * 10) / 10; r.q.y = Math.round((r.y + o.y - o0.y) * 10) / 10; placeObjEl(r.q); }
+      drawSel(); showGuides(gx, gy); return;
     }
     if (drag.mode === 'rot'){
       const cx = o0.x + o0.w / 2, cy = o0.y + o0.h / 2; let a = Math.atan2(p.y - cy, p.x - cx) * 180 / Math.PI + 90;
@@ -155,12 +172,15 @@ const Editor = (() => {
     if (o.kind === 'table'){ updateObjEl(o); } else placeObjEl(o); drawSel();
   }
   function onUp(e){
-    if (!drag) return; const d = drag; drag = null; slideEl && slideEl.querySelectorAll('.guide').forEach(n => n.remove());
-    if (d.moved){ commit(); refreshThumb(); refreshRibbon(); return; }
+    if (!drag) return; const d = drag; drag = null; slideEl && slideEl.querySelectorAll('.guide,.marq').forEach(n => n.remove());
+    if (d.mode === 'tool'){ if ((typeof Features !== 'undefined')) Features.toolUp(e); return; }
+    if (d.mode === 'marquee'){ if (d.box){ const b = d.box; const ids = slide().objects.filter(q => q.x >= b.x - 1 && q.y >= b.y - 1 && q.x + q.w <= b.x + b.w + 1 && q.y + q.h <= b.y + b.h + 1).map(q => q.id); if (ids.length) selectMany(ids); } return; }
+    if (d.moved){ const mo = objOf(d.id); if (mo && d.mode !== 'move' && d.mode !== 'rot' && mo.kind === 'box'){ const n = objEl(mo.id); if (n) fitTextIn(n, mo); } else if (mo && mo.kind === 'chart' && d.mode !== 'move') updateObjEl(mo); commit(); refreshThumb(); refreshRibbon(); return; }
     const o = objOf(d.id);
     if (d.mode === 'move' && d.wasSel && o && (o.kind === 'box' && o.geom !== 'line' || o.kind === 'table')) startEdit(e);
+    else if (d.mode === 'move' && d.wasSel && o && (typeof Features !== 'undefined')) Features.activate(o);
   }
-  function onDbl(e){ const on = e.target.closest('.obj'); if (!on || E.editing) return; const o = objOf(on.dataset.id); if (o && (o.kind === 'box' && o.geom !== 'line' || o.kind === 'table')){ select(o.id); startEdit(e); } }
+  function onDbl(e){ const on = e.target.closest('.obj'); if (!on || E.editing) return; const o = objOf(on.dataset.id); if (o && o.kind !== 'box' && o.kind !== 'table' && (typeof Features !== 'undefined')){ Features.activate(o); return; } if (o && (o.kind === 'box' && o.geom !== 'line' || o.kind === 'table')){ select(o.id); startEdit(e); } }
 
   /* ---------------------------------------------------------------- text editing */
   function editTarget(){ const n = objEl(E.sel); return n && (n.querySelector('.tc') || n.querySelector('table')); }
@@ -177,7 +197,7 @@ const Editor = (() => {
     if (!placed){ const r = document.createRange(); r.selectNodeContents(t); r.collapse(false); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
     t.addEventListener('input', onInput); drawSel(); buildTabs(); refreshRibbon();
   }
-  function onInput(){ const o = selObj(), t = editTarget(); if (!o || !t) return; syncText(o, t); refreshThumbSoon(); if (o.kind === 'table'){ const hh = Math.round(objEl(o.id).offsetHeight); if (hh !== o.h){ o.h = hh; drawSel(); } } if (E.onChange) E.onChange(E.deck); }
+  function onInput(){ const o = selObj(), t = editTarget(); if (!o || !t) return; syncText(o, t); if (autofitOn(o)) fitTextIn(objEl(o.id), o); refreshThumbSoon(); if (o.kind === 'table'){ const hh = Math.round(objEl(o.id).offsetHeight); if (hh !== o.h){ o.h = hh; drawSel(); } } if (E.onChange) E.onChange(E.deck); }
   function cleanHtml(html){ return html.replace(/<font size="7">/g, '<span>').replace(/ class="[^"]*"/g, '').replace(/<(\w+)[^>]*>\s*<\/\1>/g, m => /^<(p|li|td)/.test(m) ? m : ''); }
   function syncText(o, t){
     if (o.kind === 'table'){ o.rows = [...t.rows].map(r => [...r.cells].map(c => c.innerHTML)); return; }
@@ -284,17 +304,37 @@ const Editor = (() => {
     if (slot) slide().objects.splice(slide().objects.indexOf(slot), 1, o); else slide().objects.push(o);
     renderStage(); select(o.id); commit(); refreshThumb(); E.tab = 'picture'; buildTabs();
   }
-  function delSel(){ const o = selObj(); if (!o) return; if (E.editing) endEdit(); slide().objects = slide().objects.filter(x => x.id !== o.id); E.sel = null; renderStage(); commit(); refreshThumb(); buildTabs(); }
-  function dupSel(){ const o = selObj(); if (!o) return; const c = clone(o); c.id = uid(); c.x += 18; c.y += 18; delete c.ph; addObj(c); }
+  function delSel(){ const ids = selIds(); if (!ids.length) return; if (E.editing) endEdit(); slide().objects = slide().objects.filter(x => !ids.includes(x.id)); E.sel = null; E.multi = []; renderStage(); commit(); refreshThumb(); buildTabs(); }
+  function dupSel(){ const objs = selObjs(); if (!objs.length) return; const gmap = {}; const copies = objs.map(o => { const c = clone(o); c.id = uid(); c.x += 18; c.y += 18; delete c.ph; delete c.anim; if (c.group) c.group = gmap[c.group] || (gmap[c.group] = uid()); return c; });
+    slide().objects.push(...copies); renderStage(); selectMany(copies.map(c => c.id)); commit(); refreshThumb(); }
   function order(dir){ const o = selObj(); if (!o) return; const a = slide().objects, i = a.indexOf(o); a.splice(i, 1);
     const j = dir === 'front' ? a.length : dir === 'back' ? 0 : dir === 'fwd' ? Math.min(a.length, i + 1) : Math.max(0, i - 1); a.splice(j, 0, o); renderStage(); select(o.id); commit(); refreshThumb(); }
   function alignObj(k){ const o = selObj(); if (!o) return; const W = E.deck.size.w, H = E.deck.size.h;
     if (k === 'l') o.x = 0; if (k === 'c') o.x = Math.round((W - o.w) / 2); if (k === 'r') o.x = Math.round(W - o.w); if (k === 't') o.y = 0; if (k === 'm') o.y = Math.round((H - o.h) / 2); if (k === 'b') o.y = Math.round(H - o.h);
     placeObjEl(o); drawSel(); commit(); refreshThumb(); }
   function setProp(fn){ const o = selObj(); if (!o) return; if (E.editing) endEdit(); fn(o); updateObjEl(o); drawSel(); commit(); refreshThumb(); refreshRibbon(); }
-  function copySel(cut){ const o = selObj(); if (!o) return; E.clip = {obj: clone(o), media: o.src && o.src.startsWith('m:') ? {[o.src.slice(2)]: E.deck.media[o.src.slice(2)]} : {}}; toast(cut ? 'Cut' : 'Copied'); if (cut) delSel(); }
-  function pasteObj(){ if (!E.clip) return; Object.assign(E.deck.media, E.clip.media); const c = clone(E.clip.obj); c.id = uid(); delete c.ph; if (slide().objects.some(o => o.x === c.x && o.y === c.y)){ c.x += 18; c.y += 18; } E.clip.obj = clone(c); addObj(c); }
-  function nudge(dx, dy){ const o = selObj(); if (!o) return; o.x += dx; o.y += dy; placeObjEl(o); drawSel(); clearTimeout(nudge.t); nudge.t = setTimeout(() => { commit(); refreshThumb(); }, 400); }
+  function copySel(cut){ const objs = selObjs(); if (!objs.length) return; const media = {}; for (const o of objs) if (o.src && o.src.startsWith('m:')) media[o.src.slice(2)] = E.deck.media[o.src.slice(2)]; E.clip = {objs: clone(objs), media}; toast(cut ? 'Cut' : 'Copied'); if (cut) delSel(); }
+  function pasteObj(){ if (!E.clip) return; Object.assign(E.deck.media, E.clip.media); const gmap = {}; const objs = clone(E.clip.objs || [E.clip.obj]); const shift = objs.some(c => slide().objects.some(o => o.x === c.x && o.y === c.y));
+    for (const c of objs){ c.id = uid(); delete c.ph; delete c.anim; if (c.group) c.group = gmap[c.group] || (gmap[c.group] = uid()); if (shift){ c.x += 18; c.y += 18; } }
+    E.clip.objs = clone(objs); slide().objects.push(...objs); renderStage(); selectMany(objs.map(c => c.id)); commit(); refreshThumb(); }
+  function nudge(dx, dy){ const objs = selObjs(); if (!objs.length) return; for (const o of objs){ o.x += dx; o.y += dy; placeObjEl(o); } drawSel(); clearTimeout(nudge.t); nudge.t = setTimeout(() => { commit(); refreshThumb(); }, 400); }
+  /* arrange several objects */
+  function alignMany(k){ const objs = selObjs(); if (objs.length < 2) return alignObj(k);
+    const L = Math.min(...objs.map(o => o.x)), R = Math.max(...objs.map(o => o.x + o.w)), T = Math.min(...objs.map(o => o.y)), B = Math.max(...objs.map(o => o.y + o.h));
+    for (const o of objs){ if (k === 'l') o.x = L; if (k === 'c') o.x = (L + R) / 2 - o.w / 2; if (k === 'r') o.x = R - o.w; if (k === 't') o.y = T; if (k === 'm') o.y = (T + B) / 2 - o.h / 2; if (k === 'b') o.y = B - o.h; o.x = Math.round(o.x); o.y = Math.round(o.y); placeObjEl(o); }
+    drawSel(); commit(); refreshThumb(); }
+  function distribute(axis){ const objs = selObjs(); if (objs.length < 3){ toast('Select three or more objects to distribute'); return; } const X = axis === 'h' ? 'x' : 'y', Wd = axis === 'h' ? 'w' : 'h';
+    objs.sort((a, b) => a[X] - b[X]); const first = objs[0], last = objs[objs.length - 1]; const total = objs.reduce((s, o) => s + o[Wd], 0); const gap = (last[X] + last[Wd] - first[X] - total) / (objs.length - 1);
+    let pos = first[X]; for (const o of objs){ o[X] = Math.round(pos); pos += o[Wd] + gap; placeObjEl(o); } drawSel(); commit(); refreshThumb(); }
+  function groupSel(){ const objs = selObjs(); if (objs.length < 2){ toast('Select two or more objects to group'); return; } const g = uid(); objs.forEach(o => o.group = g); commit(); toast('Grouped'); refreshRibbon(); }
+  function ungroupSel(){ const objs = selObjs(); if (!objs.some(o => o.group)){ toast('Nothing to ungroup'); return; } objs.forEach(o => delete o.group); commit(); toast('Ungrouped'); refreshRibbon(); }
+  function selectAll(){ selectMany(slide().objects.map(o => o.id)); }
+  /* format painter */
+  const STYLE_KEYS = ['style', 'fill', 'line', 'fx', 'anchor', 'align', 'spacing'];
+  function startPainter(){ const o = selObj(); if (!o){ toast('Select the object whose look you want to copy'); return; } E.painter = {}; for (const k of STYLE_KEYS) if (o[k] !== undefined) E.painter[k] = clone(o[k]); if (o.kind === 'table') E.painter.table = {header: o.header, band: o.band, tstyle: o.tstyle, size: o.size}; toast('Format Painter: tap the object to format'); refreshRibbon(); }
+  function applyPainter(t){ const p = E.painter; E.painter = null; for (const k of STYLE_KEYS) if (p[k] !== undefined && !(k === 'fill' && t.kind === 'image')) t[k] = clone(p[k]); if (p.table && t.kind === 'table') Object.assign(t, p.table);
+    if (t.kind === 'box' && t.html && p.style) for (const prop of ['font-family', 'font-size', 'color']) t.html = stripProp(t.html, prop);
+    updateObjEl(t); select(t.id); commit(); refreshThumb(); toast('Formatting applied'); }
 
   /* table ops */
   function activeCell(){ const t = editTarget(); const s = getSelection(); if (!t || t.tagName !== 'TABLE' || !s.rangeCount) return null; let n = s.anchorNode; n = n && (n.nodeType === 1 ? n : n.parentNode); const td = n && n.closest && n.closest('td'); return td && t.contains(td) ? td : null; }
@@ -313,12 +353,12 @@ const Editor = (() => {
   }
 
   /* ---------------------------------------------------------------- slides */
-  function goto(i){ if (E.editing) endEdit(); E.cur = Math.max(0, Math.min(E.deck.slides.length - 1, i)); E.sel = null; renderStage(); markThumbs(); buildTabs(); refreshRibbon(); $('#notesIn').value = slide().notes || ''; const t = $('#thumbs').children[E.cur]; if (t) t.scrollIntoView({block: 'nearest', inline: 'nearest'}); }
+  function goto(i){ if (E.editing) endEdit(); E.cur = Math.max(0, Math.min(E.deck.slides.length - 1, i)); E.sel = null; E.multi = []; renderStage(); markThumbs(); buildTabs(); refreshRibbon(); $('#notesIn').value = slide().notes || ''; const t = $('#thumbs').children[E.cur]; if (t) t.scrollIntoView({block: 'nearest', inline: 'nearest'}); }
   function addSlide(layout){
     if (E.editing) endEdit(); const cur = slide(); layout = layout || (cur.layout === 'title' || cur.layout === 'section' || !cur.layout ? 'content' : cur.layout === 'blank' ? 'blank' : cur.layout);
     const s = newSlide(layout, E.deck); s.transition = cur.transition || 'none'; E.deck.slides.splice(E.cur + 1, 0, s); E.cur++; renderAll(); commit();
   }
-  function dupSlide(i = E.cur){ const s = clone(E.deck.slides[i]); s.id = uid(); s.objects.forEach(o => o.id = uid()); E.deck.slides.splice(i + 1, 0, s); E.cur = i + 1; renderAll(); commit(); }
+  function dupSlide(i = E.cur){ const s = clone(E.deck.slides[i]); s.id = uid(); const idmap = {}; s.objects.forEach(o => { o.mk = o.mk || o.id; const n = uid(); idmap[o.id] = n; o.id = n; }); if (s.anims) s.anims = s.anims.filter(x => idmap[x.obj]).map(x => ({...x, id: uid(), obj: idmap[x.obj]})); E.deck.slides.splice(i + 1, 0, s); E.cur = i + 1; renderAll(); commit(); }
   function delSlide(i = E.cur){ if (E.deck.slides.length === 1){ E.deck.slides[0] = newSlide('blank', E.deck); } else E.deck.slides.splice(i, 1); E.cur = Math.min(E.cur, E.deck.slides.length - 1); renderAll(); commit(); toast('Slide deleted · Undo to bring it back'); }
   function moveSlide(i, j){ if (j < 0 || j >= E.deck.slides.length || i === j) return; const [s] = E.deck.slides.splice(i, 1); E.deck.slides.splice(j, 0, s); E.cur = j; renderAll(); commit(); }
   function applyLayout(s, layout){
@@ -356,7 +396,7 @@ const Editor = (() => {
     const box = $('#thumbs'); box.innerHTML = ''; box.style.setProperty('--ar', `${E.deck.size.w}/${E.deck.size.h}`);
     E.deck.slides.forEach((s, i) => {
       const mini = h('div', {class: 'tmini'});
-      const b = h('button', {class: 'thumb', type: 'button', 'aria-label': `Slide ${i + 1}`, 'aria-current': i === E.cur ? 'true' : 'false', draggable: 'true'}, h('span', {class: 'tn'}, String(i + 1)), mini);
+      const b = h('button', {class: 'thumb' + (s.hidden ? ' hidden' : ''), type: 'button', 'aria-label': `Slide ${i + 1}`, 'aria-current': i === E.cur ? 'true' : 'false', draggable: 'true'}, h('span', {class: 'tn'}, String(i + 1)), mini);
       if (s.transition && s.transition !== 'none') mini.appendChild(h('span', {class: 'tr'}, '★'));
       b.addEventListener('click', ev => { if (i === E.cur && !ev.detail) return; if (i === E.cur) slideMenu(b, i); else goto(i); });
       b.addEventListener('contextmenu', ev => { ev.preventDefault(); goto(i); slideMenu(b, i); });
@@ -482,8 +522,8 @@ const Editor = (() => {
   }
 
   /* ---------------------------------------------------------------- ribbon */
-  const TABS = [['file', 'File'], ['home', 'Home'], ['insert', 'Insert'], ['design', 'Design'], ['transitions', 'Transitions'], ['show', 'Slide Show'], ['view', 'View']];
-  function ctxTab(){ const o = selObj(); if (!o) return null; return o.kind === 'image' ? ['picture', 'Picture'] : o.kind === 'table' ? ['table', 'Table'] : ['shape', 'Shape']; }
+  const TABS = [['file', 'File'], ['home', 'Home'], ['insert', 'Insert'], ['draw', 'Draw'], ['design', 'Design'], ['transitions', 'Transitions'], ['animations', 'Animations'], ['show', 'Slide Show'], ['review', 'Review'], ['view', 'View']];
+  function ctxTab(){ const o = selObj(); if (!o || E.multi.length) return o && E.multi.length ? ['shape', 'Arrange'] : null; return o.kind === 'image' ? ['picture', 'Picture'] : o.kind === 'table' ? ['table', 'Table'] : o.kind === 'chart' ? ['chart', 'Chart'] : o.kind === 'ink' ? ['ink', 'Drawing'] : ['shape', 'Shape']; }
   function buildTabs(){
     const tabs = [...TABS]; const c = ctxTab(); if (c) tabs.push(c);
     if (!tabs.some(t => t[0] === E.tab)) E.tab = 'home';
@@ -507,6 +547,7 @@ const Editor = (() => {
   function step(dir){ const st = curState(); const cur = +st.size || 18; const i = SIZES.findIndex(s => s >= cur); const n = dir > 0 ? SIZES[Math.min(SIZES.length - 1, SIZES[i] === cur ? i + 1 : i)] : SIZES[Math.max(0, (i < 0 ? SIZES.length : i) - 1)]; fmt('size', n); }
   function buildRibbon(){
     const r = $('#ribbon'); r.innerHTML = ''; for (const k in R) delete R[k]; const t = E.tab, o = selObj();
+    if ((typeof Features !== 'undefined') && Features.buildTab(t, o, r)){ refreshRibbon(); return; }
     if (t === 'home'){
       r.append(
         grp('Slides', rb(I.newSlide, 'New slide', b => addSlide(), {label: 'New'}), rb(I.caret, 'New slide with layout', b => layoutPicker(b, k => addSlide(k))), rb(I.layout, 'Layout', b => layoutPicker(b, k => setLayout(k))), rb(I.dup, 'Duplicate slide', () => dupSlide()), rb(I.trash, 'Delete slide', () => delSlide())),
@@ -552,7 +593,7 @@ const Editor = (() => {
           rb(I.weight, 'Outline weight', b => pop(b, p => { p.append(h('div', {class: 'ph'}, 'Weight')); [0.75, 1, 1.5, 2.25, 3, 4.5, 6].forEach(w => p.append(mi('', w + ' pt', () => setProp(o => o.line = {color: (o.line && o.line.color) || th().text, width: w, dash: o.line && o.line.dash}), o.line && o.line.width === w))); p.append(h('hr'), mi('', 'Dashed', () => setProp(o => { if (o.line) o.line.dash = !o.line.dash; }), o.line && o.line.dash)); }), {caret: true}),
           rb(I.shapes, 'Change shape', b => shapePicker(b, g => setProp(o => o.geom = g)), {caret: true})),
         grp('Arrange', rb(I.front, 'Bring to front', () => order('front')), rb(I.back, 'Send to back', () => order('back')), rb(I.up, 'Bring forward', () => order('fwd')), rb(I.down, 'Send backward', () => order('bwd'))),
-        grp('Align to slide', rb(I.alignL, 'Align left', () => alignObj('l')), rb(I.alignC, 'Align centre', () => alignObj('c')), rb(I.alignR, 'Align right', () => alignObj('r')), rb(I.alignT, 'Align top', () => alignObj('t')), rb(I.alignM, 'Align middle', () => alignObj('m')), rb(I.alignB, 'Align bottom', () => alignObj('b'))),
+        grp('Align to slide', rb(I.alignL, 'Align left', () => alignMany('l')), rb(I.alignC, 'Align centre', () => alignMany('c')), rb(I.alignR, 'Align right', () => alignMany('r')), rb(I.alignT, 'Align top', () => alignMany('t')), rb(I.alignM, 'Align middle', () => alignMany('m')), rb(I.alignB, 'Align bottom', () => alignMany('b'))),
         grp('Rotate', rb(I.rot, 'Rotate 90°', () => setProp(o => o.rot = ((o.rot || 0) + 90) % 360)), rb(I.flipH, 'Flip horizontal', () => setProp(o => o.flipH = !o.flipH)), rb(I.flipV, 'Flip vertical', () => setProp(o => o.flipV = !o.flipV))),
         grp('Size', sizeInputs(o)),
         grp('Edit', rb(I.dup, 'Duplicate', dupSel), rb(I.trash, 'Delete', delSel)),
@@ -561,7 +602,7 @@ const Editor = (() => {
       r.append(
         grp('Picture', fileBtn(I.replace, 'Change picture', 'image/*', f => insertImage(f, true), {label: 'Change'}), rb(I.bgimg, 'Use as slide background', () => { const src = o.src; slide().objects = slide().objects.filter(x => x !== o); E.sel = null; setBg({image: src, color: '#FFFFFF'}); }, {label: 'As background'})),
         grp('Arrange', rb(I.front, 'Bring to front', () => order('front')), rb(I.back, 'Send to back', () => order('back')), rb(I.up, 'Bring forward', () => order('fwd')), rb(I.down, 'Send backward', () => order('bwd'))),
-        grp('Align to slide', rb(I.alignL, 'Align left', () => alignObj('l')), rb(I.alignC, 'Align centre', () => alignObj('c')), rb(I.alignR, 'Align right', () => alignObj('r')), rb(I.alignT, 'Align top', () => alignObj('t')), rb(I.alignM, 'Align middle', () => alignObj('m')), rb(I.alignB, 'Align bottom', () => alignObj('b'))),
+        grp('Align to slide', rb(I.alignL, 'Align left', () => alignMany('l')), rb(I.alignC, 'Align centre', () => alignMany('c')), rb(I.alignR, 'Align right', () => alignMany('r')), rb(I.alignT, 'Align top', () => alignMany('t')), rb(I.alignM, 'Align middle', () => alignMany('m')), rb(I.alignB, 'Align bottom', () => alignMany('b'))),
         grp('Rotate', rb(I.rot, 'Rotate 90°', () => setProp(o => o.rot = ((o.rot || 0) + 90) % 360)), rb(I.flipH, 'Flip horizontal', () => setProp(o => o.flipH = !o.flipH)), rb(I.flipV, 'Flip vertical', () => setProp(o => o.flipV = !o.flipV))),
         grp('Size', sizeInputs(o), rb(I.fit, 'Fill the slide', () => setProp(o => { const W = E.deck.size.w, H = E.deck.size.h; const k = Math.max(W / o.w, H / o.h); o.w = Math.round(o.w * k); o.h = Math.round(o.h * k); o.x = Math.round((W - o.w) / 2); o.y = Math.round((H - o.h) / 2); o.rot = 0; }))),
         grp('Edit', rb(I.dup, 'Duplicate', dupSel), rb(I.trash, 'Delete', delSel)),
@@ -571,11 +612,12 @@ const Editor = (() => {
         grp('Rows & columns', rb(I.rowA, 'Insert row above', () => tableOp('rowA')), rb(I.rowB, 'Insert row below', () => tableOp('rowB')), rb(I.colL, 'Insert column left', () => tableOp('colL')), rb(I.colR, 'Insert column right', () => tableOp('colR')), rb(I.delRow, 'Delete row', () => tableOp('delRow')), rb(I.delCol, 'Delete column', () => tableOp('delCol'))),
         grp('Style', rb(I.header, 'Header row', () => tableOp('header'), {key: 'header'}), rb(I.band, 'Banded rows', () => tableOp('band'), {key: 'band'})),
         grp('Text', rb(I.grow, 'Bigger text', () => step(1)), rb(I.shrink, 'Smaller text', () => step(-1)), rb(I.bold, 'Bold', () => fmt('bold'), {key: 'bold'})),
-        grp('Align to slide', rb(I.alignC, 'Align centre', () => alignObj('c')), rb(I.alignM, 'Align middle', () => alignObj('m'))),
+        grp('Align to slide', rb(I.alignC, 'Align centre', () => alignMany('c')), rb(I.alignM, 'Align middle', () => alignMany('m'))),
         grp('Edit', rb(I.dup, 'Duplicate', dupSel), rb(I.trash, 'Delete table', delSel)),
       );
       R.header.classList.toggle('on', !!o.header); R.band.classList.toggle('on', !!o.band);
     }
+    if ((typeof Features !== 'undefined')) Features.extend(t, o, r);
     refreshRibbon();
   }
   function sizeInputs(o){
@@ -613,8 +655,11 @@ const Editor = (() => {
     if (mod && k === 'x'){ if (E.sel){ e.preventDefault(); copySel(true); } return; }
     if (mod && k === 'v'){ if (E.clip){ e.preventDefault(); pasteObj(); } return; }
     if (mod && k === 'm'){ e.preventDefault(); addSlide(); return; }
+    if (mod && k === 'a'){ e.preventDefault(); selectAll(); return; }
+    if (mod && k === 'g'){ e.preventDefault(); e.shiftKey ? ungroupSel() : groupSel(); return; }
+    if (mod && k === 'f'){ e.preventDefault(); if ((typeof Features !== 'undefined')) Features.findReplace(); return; }
     if (e.key === 'Delete' || e.key === 'Backspace'){ if (E.sel){ e.preventDefault(); delSel(); } return; }
-    if (e.key === 'Escape'){ select(null); return; }
+    if (e.key === 'Escape'){ if (E.tool && (typeof Features !== 'undefined')){ Features.setTool(null); return; } E.painter = null; select(null); return; }
     if ((e.key === 'Enter' || e.key === 'F2') && E.sel){ e.preventDefault(); startEdit(); return; }
     const st = e.shiftKey ? 10 : 1;
     if (E.sel && e.key.startsWith('Arrow')){ e.preventDefault(); nudge(e.key === 'ArrowLeft' ? -st : e.key === 'ArrowRight' ? st : 0, e.key === 'ArrowUp' ? -st : e.key === 'ArrowDown' ? st : 0); return; }
@@ -647,5 +692,8 @@ const Editor = (() => {
     renderAll(); updUndo(); requestAnimationFrame(layoutStage);
   }
   function flush(){ if (E.editing) endEdit(); }
-  return {open, flush, toast, get deck(){ return E.deck; }, get cur(){ return E.cur; }, set onChange(f){ E.onChange = f; }, goto, layoutStage, select, insertImage, I, h, pop, mi, closePop, startEdit, fmt, setTheme, addSlide, setLayout};
+  const api = {E, I, h, $, slide, objOf, selObj, selObjs, selIds, th, commit, renderStage, renderAll, renderThumbs, refreshThumb, select, selectMany, addObj, updateObjEl, placeObjEl, drawSel, buildTabs, buildRibbon, refreshRibbon,
+    pop, mi, closePop, colorPop, rb, grp, fileBtn, toast, setProp, endEdit, startEdit, fmt, exec, spanStyle, restoreRange, editTarget, syncText, stripProp, curState, textual, delSel, dupSel, order, alignMany, distribute, groupSel, ungroupSel, selectAll, startPainter,
+    goto, addSlide, dupSlide, delSlide, moveSlide, setTransition, toggleNotes, zoom, insertImage, pt: e => pt(e), get slideEl(){ return slideEl; }, get scale(){ return scale; }, startToolDrag: (e) => { drag = {mode: 'tool', cx: e.clientX, cy: e.clientY, moved: false}; try { $('#stagewrap').setPointerCapture(e.pointerId); } catch(_){} }};
+  return {api, open, flush, toast, get deck(){ return E.deck; }, get cur(){ return E.cur; }, set onChange(f){ E.onChange = f; }, goto, layoutStage, select, insertImage, I, h, pop, mi, closePop, startEdit, fmt, setTheme, addSlide, setLayout};
 })();

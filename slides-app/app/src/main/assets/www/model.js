@@ -85,22 +85,49 @@ function mediaSrc(deck, src){ return src && src.startsWith('m:') ? (deck.media |
 /* ---------------------------------------------------------------- renderer */
 const escA = s => String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
 function objTransform(o){ const t = []; if (o.rot) t.push(`rotate(${o.rot}deg)`); if (o.flipH) t.push('scaleX(-1)'); if (o.flipV) t.push('scaleY(-1)'); return t.join(' '); }
+/* look of a table cell for the table style */
+function tableCellLook(o, st, ri, ci){
+  const s = o.tstyle || 'accent', head = o.header && ri === 0, alt = o.band && (o.header ? ri % 2 === 0 : ri % 2 === 1);
+  const own = o.fills && o.fills[ri] && o.fills[ri][ci];
+  let bg = null, fg = null, bold = head;
+  if (s === 'accent' || s === 'medium'){ if (head){ bg = st.accent; fg = '#FFFFFF'; } else if (alt) bg = s === 'medium' ? tint(st.accent, .7) : tint(st.accent, .88); else if (s === 'medium') bg = tint(st.accent, .85); }
+  else if (s === 'dark'){ if (head){ bg = shade(st.accent, .45); fg = '#FFFFFF'; } else { bg = alt ? shade(st.accent, .15) : st.accent; fg = '#FFFFFF'; } }
+  else if (s === 'light'){ if (alt) bg = tint(st.accent, .9); }
+  else if (s === 'grid'){ if (head) fg = st.accent; }
+  if (own){ bg = own; fg = isDark(own) ? '#FFFFFF' : fg && isDark(fg) ? fg : (isDark(own) ? '#FFFFFF' : null); }
+  return {bg, fg, bold, border: s === 'grid' ? st.accent : s === 'light' ? (head ? st.accent : 'transparent') : st.border};
+}
+function objFilter(o){ const fx = o.fx || {}, a = o.adjust || {}; const f = [];
+  if (a.bright) f.push(`brightness(${1 + a.bright / 100})`); if (a.contrast) f.push(`contrast(${1 + a.contrast / 100})`); if (a.gray) f.push('grayscale(1)'); if (a.sepia) f.push('sepia(.8)');
+  if (fx.shadow) f.push('drop-shadow(3px 4px 5px rgba(0,0,0,.35))'); if (fx.glow) f.push(`drop-shadow(0 0 6px ${fx.glow})`); return f.join(' '); }
 function renderObj(o, deck, th, opts = {}){
   const el = document.createElement('div'); el.className = 'obj'; el.dataset.id = o.id;
   el.style.cssText = `left:${o.x}px;top:${o.y}px;width:${o.w}px;height:${Math.max(o.h, 0)}px;transform:${objTransform(o)}`;
-  if (o.kind === 'image'){ const im = document.createElement('img'); im.src = mediaSrc(deck, o.src); im.alt = ''; im.draggable = false; el.appendChild(im); return el; }
+  const fx = o.fx || {}; if (fx.opacity != null && fx.opacity < 1) el.style.opacity = fx.opacity; const flt = objFilter(o); if (flt) el.style.filter = flt;
+  if (o.kind === 'image'){
+    const im = document.createElement('img'); im.src = mediaSrc(deck, o.src); im.alt = o.alt || ''; im.draggable = false;
+    const c = o.crop; if (c && (c.l || c.t || c.r || c.b)){ const fw = 1 - c.l - c.r, fh = 1 - c.t - c.b; im.style.cssText = `inset:auto;width:${100 / fw}%;height:${100 / fh}%;left:${-c.l / fw * 100}%;top:${-c.t / fh * 100}%`; }
+    const wrap = document.createElement('div'); wrap.className = 'imgwrap'; wrap.appendChild(im);
+    if (o.mask === 'circle') wrap.style.borderRadius = '50%'; else if (o.mask === 'rounded') wrap.style.borderRadius = Math.min(o.w, o.h) * 0.12 + 'px';
+    if (o.border){ const bd = document.createElement('div'); bd.className = 'imgborder'; bd.style.cssText = `border:${o.border.width}px solid ${o.border.color};border-radius:${wrap.style.borderRadius || 0}`; wrap.appendChild(bd); }
+    el.appendChild(wrap); return el;
+  }
+  if (o.kind === 'chart'){ el.innerHTML = chartSvg(o, th); return el; }
+  if (o.kind === 'ink'){ el.innerHTML = `<svg class="ink" viewBox="0 0 ${o.vw || o.w} ${o.vh || o.h}" preserveAspectRatio="none" width="100%" height="100%">${(o.paths || []).map(p => `<path d="${p.d}" fill="none" stroke="${p.color}" stroke-opacity="${p.alpha || 1}" stroke-width="${p.width}" stroke-linecap="round" stroke-linejoin="round"/>`).join('')}</svg>`; return el; }
   const st = resolve(o, th);
   const font = `font-family:${fontStack(st.font)};font-size:${st.size}px;color:${st.color};${st.bold ? 'font-weight:700;' : ''}${st.italic ? 'font-style:italic;' : ''}`;
   if (o.kind === 'table'){
     const tb = document.createElement('table'); tb.style.cssText = font + `font-size:${o.size || 14}px;--tb:${st.border}`;
     o.rows.forEach((r, ri) => { const tr = tb.insertRow(); if (o.header && ri === 0) tr.className = 'hd';
-      r.forEach((c, ci) => { const td = tr.insertCell(); td.innerHTML = c || ''; ensureFontsIn(c); const f = (o.fills && o.fills[ri] && o.fills[ri][ci]) || (o.header && ri === 0 ? st.accent : (o.band && ri % 2 === 0 ? 'color-mix(in srgb,' + st.accent + ' 12%, transparent)' : null)); if (f) td.style.background = f; if (o.header && ri === 0) td.style.color = '#FFFFFF'; }); });
+      r.forEach((c, ci) => { const td = tr.insertCell(); td.innerHTML = c || ''; ensureFontsIn(c); const lk = tableCellLook(o, st, ri, ci); if (lk.bg) td.style.background = lk.bg; if (lk.fg) td.style.color = lk.fg; td.style.borderColor = lk.border; if (!lk.bold) td.style.fontWeight = 'inherit'; }); });
     el.appendChild(tb); el.style.height = 'auto'; return el;
   }
   // box
   if (o.fill || o.line || o.geom === 'line'){
-    const sw = o.line ? o.line.width || 1 : 0;
-    const svg = `<svg class="geo" viewBox="0 0 ${Math.max(o.w, 0.01)} ${Math.max(o.h, 0.01)}" preserveAspectRatio="none"><path d="${geomPath(o.geom, o.w, o.h)}" fill="${o.fill || 'none'}" stroke="${o.line ? o.line.color : 'none'}" stroke-width="${sw}" vector-effect="non-scaling-stroke"${o.line && o.line.dash ? ' stroke-dasharray="6 4"' : ''}/></svg>`;
+    const sw = o.line ? o.line.width || 1 : 0; const fo = fx.fillAlpha != null ? ` fill-opacity="${fx.fillAlpha}"` : '';
+    let fill = o.fill || 'none', defs = '';
+    if (o.grad){ const gid = 'sg' + o.id; defs = `<defs><linearGradient id="${gid}" x1="0" y1="0" x2="${o.grad.angle === 90 ? 1 : o.grad.angle === 135 ? 1 : 0}" y2="${o.grad.angle === 90 ? 0 : 1}"><stop offset="0" stop-color="${o.grad.a}"/><stop offset="1" stop-color="${o.grad.b}"/></linearGradient></defs>`; fill = `url(#${gid})`; }
+    const svg = `<svg class="geo" viewBox="0 0 ${Math.max(o.w, 0.01)} ${Math.max(o.h, 0.01)}" preserveAspectRatio="none">${defs}<path d="${geomPath(o.geom, o.w, o.h)}" fill="${fill}"${fo} stroke="${o.line ? o.line.color : 'none'}" stroke-width="${sw}" vector-effect="non-scaling-stroke"${o.line && o.line.dash ? ' stroke-dasharray="6 4"' : ''}/></svg>`;
     el.insertAdjacentHTML('beforeend', svg);
   }
   if (o.geom !== 'line' && !o.deco){
@@ -108,13 +135,25 @@ function renderObj(o, deck, th, opts = {}){
     if (o.ph && !hasText) el.classList.add('ph-empty');
     const tx = document.createElement('div'); tx.className = 'tx'; tx.dataset.a = o.anchor || 't';
     if (o.vert){ tx.style.writingMode = 'vertical-rl'; }
-    const tc = document.createElement('div'); tc.className = 'tc'; tc.style.cssText = font + (o.ph === 'title' || o.ph === 'subtitle' ? 'line-height:1.1;' : '');
+    const sp = o.spacing || {};
+    const tc = document.createElement('div'); tc.className = 'tc'; tc.style.cssText = font + (sp.line ? `line-height:${1.15 * sp.line};` : o.ph === 'title' || o.ph === 'subtitle' ? 'line-height:1.1;' : '') + (sp.after != null ? `--pa:${sp.after}px;` : '') + (o.textShadow ? 'text-shadow:2px 2px 4px rgba(0,0,0,.45);' : '') + (o.caps ? 'text-transform:uppercase;' : '') + (o.letter ? `letter-spacing:${o.letter}px;` : '');
     if (o.align) tc.style.textAlign = o.align;
+    if (o.cols > 1) tc.style.columns = o.cols;
     tc.innerHTML = hasText ? o.html : (o.html && !o.ph ? o.html : ''); ensureFontsIn(o.html);
     if (o.ph) tc.dataset.prompt = o.prompt || PROMPTS[o.ph] || PROMPTS.body;
+    if (o.fit && o.fit < 1 && autofitOn(o)){ tc.style.zoom = o.fit; tc.style.width = (100 / o.fit) + '%'; }
     tx.appendChild(tc); el.appendChild(tx);
   }
   return el;
+}
+const autofitOn = o => o.kind === 'box' && o.autofit !== false && (o.ph || o.autofit);
+/* shrink text that overflows its box (PowerPoint's "Shrink text on overflow"); measures the live element */
+function fitTextIn(el, o){
+  if (!autofitOn(o)) return false; const tc = el.querySelector('.tc'); if (!tc || !tc.textContent.trim()) { if (o.fit){ delete o.fit; return true; } return false; }
+  tc.style.zoom = ''; tc.style.width = ''; const box = o.h - 7.2; let k = 1;
+  if (tc.scrollHeight > box + 1){ k = Math.max(0.4, box / tc.scrollHeight); for (let i = 0; i < 6; i++){ tc.style.zoom = k; tc.style.width = (100 / k) + '%'; if (tc.scrollHeight * k <= box + 1) break; k = Math.max(0.4, k * 0.94); } }
+  k = Math.round(k * 100) / 100; if (k >= 1){ tc.style.zoom = ''; tc.style.width = ''; }
+  const prev = o.fit || 1; if (Math.abs(prev - k) > 0.005){ if (k >= 1) delete o.fit; else o.fit = k; return true; } return false;
 }
 function renderSlide(slide, deck, opts = {}){
   const th = slideTheme(deck, slide); const W = deck.size.w, H = deck.size.h;
@@ -124,7 +163,18 @@ function renderSlide(slide, deck, opts = {}){
   const tone = bgTone(slide.bg && !slide.bg.image ? slide.bg : null, th); el.style.setProperty('--bullet', Math.abs(lum(th.accent) - lum(tone)) < 0.18 ? th.text : th.accent);
   const art = decoSvg(deck, slide); if (art) el.insertAdjacentHTML('beforeend', art);
   for (const o of slide.objects){ if (!opts.edit && o.picSlot) continue; el.appendChild(renderObj(o, deck, th, opts)); }
+  for (const o of footerObjs(deck, slide)){ const n = renderObj(o, deck, th); n.classList.add('hf'); el.appendChild(n); }
   return el;
+}
+/* Header & footer (Insert › Header & Footer): slide number, date and footer text */
+function footerObjs(deck, slide){
+  const hf = deck.hf; if (!hf || (!hf.num && !hf.date && !hf.text)) return []; if (hf.notTitle && slide.layout === 'title') return [];
+  const W = deck.size.w, H = deck.size.h, y = H - 34, mk = (id, x, w, html, align) => ({id: 'hf-' + id, kind: 'box', geom: 'rect', fill: null, line: null, html: `<p style="text-align:${align}">${html}</p>`, x, y, w, h: 26, rot: 0, anchor: 'ctr', style: {size: 11}, hfKind: id});
+  const out = [], idx = deck.slides.indexOf(slide) + 1;
+  if (hf.date) out.push(mk('date', W * .05, W * .25, escA(hf.dateText || new Date().toLocaleDateString()), 'left'));
+  if (hf.text) out.push(mk('text', W * .33, W * .34, escA(hf.text), 'center'));
+  if (hf.num) out.push(mk('num', W * .7, W * .25, String(idx), 'right'));
+  return out;
 }
 /* scaled, non-interactive copy of a slide inside `host` (thumbnails, templates) */
 function miniSlide(host, slide, deck){

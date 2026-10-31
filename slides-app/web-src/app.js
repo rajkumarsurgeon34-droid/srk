@@ -108,12 +108,42 @@ const App = (() => {
   window.srkOpenIncoming = async name => { try { const r = await fetch('/incoming/file'); if (!r.ok) throw 0; openBytes(await r.arrayBuffer(), name || 'Presentation.pptx'); } catch(e){ toast('Couldn’t open the file you shared.', 4000); } };
 
   /* ---------------------------------------------------------------- export */
+  /* pictures with crop / shape / border / colour changes, icons and drawings become plain pictures for export */
+  const loadImg = src => new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = () => rej(new Error('Couldn’t read a picture.')); im.src = src; });
+  async function bakeImage(o, deck){
+    const src = mediaSrc(deck, o.src), im = await loadImg(src), c = o.crop || {l: 0, t: 0, r: 0, b: 0};
+    const nw = im.naturalWidth || o.w * 3, nh = im.naturalHeight || o.h * 3; const sx = nw * c.l, sy = nh * c.t, sw = nw * (1 - c.l - c.r), sh = nh * (1 - c.t - c.b);
+    const k = Math.min(1, 1800 / Math.max(sw, sh)) * (/^data:image\/svg/.test(src) ? Math.max(1, 600 / Math.max(sw, sh)) : 1); const cw = Math.max(1, Math.round(sw * k)), ch = Math.max(1, Math.round(sh * k));
+    const cv = document.createElement('canvas'); cv.width = cw; cv.height = ch; const x = cv.getContext('2d'); const a = o.adjust || {};
+    const f = []; if (a.bright) f.push(`brightness(${1 + a.bright / 100})`); if (a.contrast) f.push(`contrast(${1 + a.contrast / 100})`); if (a.gray) f.push('grayscale(1)'); if (a.sepia) f.push('sepia(.8)'); if (f.length) x.filter = f.join(' ');
+    const r = o.mask === 'circle' ? null : o.mask === 'rounded' ? Math.min(cw, ch) * 0.12 : 0;
+    x.save(); x.beginPath(); if (o.mask === 'circle') x.ellipse(cw / 2, ch / 2, cw / 2, ch / 2, 0, 0, Math.PI * 2); else if (r) x.roundRect(0, 0, cw, ch, r); else x.rect(0, 0, cw, ch); x.clip();
+    x.drawImage(im, sx, sy, sw, sh, 0, 0, cw, ch); x.restore(); x.filter = 'none';
+    if (o.border){ const bw = o.border.width * cw / o.w; x.lineWidth = bw * 2; x.strokeStyle = o.border.color; x.beginPath(); if (o.mask === 'circle') x.ellipse(cw / 2, ch / 2, cw / 2, ch / 2, 0, 0, Math.PI * 2); else if (r) x.roundRect(0, 0, cw, ch, r); else x.rect(0, 0, cw, ch); x.save(); x.clip(); x.stroke(); x.restore(); }
+    const png = o.mask || /png|svg|gif/.test(src.slice(0, 30)) || o.icon; return png ? cv.toDataURL('image/png') : cv.toDataURL('image/jpeg', 0.9);
+  }
+  async function bakeInk(o){ const W = Math.max(1, o.w), H = Math.max(1, o.h), k = 3;
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W * k}" height="${H * k}" viewBox="0 0 ${o.vw || W} ${o.vh || H}" preserveAspectRatio="none">${o.paths.map(p => `<path d="${p.d}" fill="none" stroke="${p.color}" stroke-opacity="${p.alpha || 1}" stroke-width="${p.width}" stroke-linecap="round" stroke-linejoin="round"/>`).join('')}</svg>`;
+    const im = await loadImg('data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg)); const cv = document.createElement('canvas'); cv.width = W * k; cv.height = H * k; cv.getContext('2d').drawImage(im, 0, 0); return cv.toDataURL('image/png'); }
+  async function bakeDeck(deck){
+    const d = {...deck, media: {...deck.media}, slides: []}; const cache = new Map();
+    for (const s of deck.slides){ const objs = [];
+      for (const o of s.objects){
+        if (o.kind === 'image' && (o.crop || o.mask || o.border || o.adjust || o.icon || /^data:image\/svg/.test(o.src || ''))){ const key = JSON.stringify([o.src, o.crop, o.mask, o.border, o.adjust, o.w, o.h]); let src = cache.get(key); if (!src){ try { src = await bakeImage(o, deck); } catch(e){ src = mediaSrc(deck, o.src); } cache.set(key, src); }
+          const c = {...o, src, baked: true}; delete c.crop; delete c.mask; delete c.border; delete c.adjust; objs.push(c); }
+        else if (o.kind === 'ink'){ objs.push({id: o.id, kind: 'image', src: await bakeInk(o), x: o.x, y: o.y, w: o.w, h: o.h, rot: o.rot || 0, fx: o.fx, baked: true}); }
+        else objs.push(o);
+      }
+      d.slides.push({...s, objects: objs}); }
+    return d;
+  }
   function exportModel(deck){
     const slides = deck.slides.map(s => {
       const th = slideTheme(deck, s); const objects = [];
       for (const o of s.objects){ if (o.picSlot) continue; if (o.kind === 'box' && o.ph && !(o.html || '').replace(/<[^>]+>/g, '').trim()) continue;
-        const c = {...o, resolved: resolve(o, th)}; if (c.kind === 'image') c.src = mediaSrc(deck, c.src); objects.push(c); }
-      return {...s, objects};
+        const c = {...o, resolved: resolve(o, th)}; if (c.kind === 'image') c.src = mediaSrc(deck, c.src); if (c.kind === 'chart'){ c.palette = o.colors && o.colors.length ? o.colors : chartPalette(th); c.ink = th.text; c.font = th.body; } objects.push(c); }
+      for (const f of footerObjs(deck, s)) objects.push({...f, resolved: resolve(f, th), hf: true});
+      return {...s, objects, anims: Features.anims(s)};
     });
     return {...deck, slides};
   }
@@ -123,13 +153,13 @@ const App = (() => {
       im.onerror = () => rej(new Error('Couldn’t draw a slide background.')); im.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg); });
   }
   async function makePptx(){
-    Editor.flush(); await needPptx(); const deck = Editor.deck; const cache = {};
-    return writePptx(exportModel(deck), {resolveBg: async s => { const b = backgroundSvg(deck, s); if (b.plain) return {color: b.color};
+    Editor.flush(); await needPptx(); const deck = Editor.deck; const cache = {}; const baked = await bakeDeck(deck);
+    return writePptx(exportModel(baked), {resolveBg: async s => { const b = backgroundSvg(deck, s); if (b.plain) return {color: b.color};
       return {image: cache[b.svg] || (cache[b.svg] = await rasterBg(b.svg, deck.size.w, deck.size.h))}; }});
   }
   async function savePptx(){ try { busy('Saving PowerPoint file…'); const b = await makePptx(); unbusy(); await saveFile(new Blob([b], {type: PPTX_MIME}), cleanName(Editor.deck.name, 'pptx')); } catch(e){ unbusy(); toast(e.message || 'Couldn’t save.', 4000); console.error(e); } }
   async function slideCanvases(onEach, scaleK = 2){
-    Editor.flush(); await needCanvas(); const deck = Editor.deck; const host = h('div', {class: 'offscreen'}); document.body.appendChild(host);
+    Editor.flush(); await needCanvas(); const deck = await bakeDeck(Editor.deck); const host = h('div', {class: 'offscreen'}); document.body.appendChild(host);
     try {
       await document.fonts.ready;
       for (let i = 0; i < deck.slides.length; i++){
@@ -147,6 +177,38 @@ const App = (() => {
       await slideCanvases(async c => { const jpg = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.9)); const img = await pdf.embedJpg(await jpg.arrayBuffer()); const p = pdf.addPage([deck.size.w, deck.size.h]); p.drawImage(img, {x: 0, y: 0, width: deck.size.w, height: deck.size.h}); });
       const bytes = await pdf.save(); unbusy(); const blob = new Blob([bytes], {type: 'application/pdf'});
       share ? shareFile(blob, cleanName(deck.name, 'pdf')) : saveFile(blob, cleanName(deck.name, 'pdf'));
+    } catch(e){ unbusy(); toast(e.message || 'Couldn’t make the PDF.', 4000); console.error(e); }
+  }
+  /* handouts and notes pages (PDF on A4) */
+  function handoutsDialog(){
+    const sel = h('select', {class: 'inp', 'aria-label': 'Layout'}); [['1', 'Full page slides'], ['2', '2 slides per page'], ['3', '3 slides per page, with lines for notes'], ['4', '4 slides per page'], ['6', '6 slides per page'], ['9', '9 slides per page'], ['notes', 'Notes pages (slide and speaker notes)']].forEach(([v, n]) => sel.append(h('option', {value: v}, n)));
+    const fr = h('input', {type: 'checkbox'}); fr.checked = true; const hid = h('input', {type: 'checkbox'});
+    dialog('Print & handouts', h('div', {style: 'display:flex;flex-direction:column;gap:10px'}, h('label', {class: 'f'}, 'Layout', sel), h('label', {class: 'chkrow'}, fr, ' Frame slides'), h('label', {class: 'chkrow'}, hid, ' Include hidden slides'), h('p', {class: 'hint'}, 'Makes a PDF you can print or share.')),
+      [['Cancel'], ['Make PDF', 'primary', () => { makeHandouts(sel.value, fr.checked, hid.checked); }]]);
+  }
+  async function makeHandouts(layout, frame, withHidden){
+    try {
+      const deck = Editor.deck, keep = deck.slides.map((s, i) => i).filter(i => withHidden || !deck.slides[i].hidden); const imgs = [];
+      await slideCanvases(async (c, i) => { if (keep.includes(i)) imgs.push({i, jpg: await (await new Promise(r => c.toBlob(r, 'image/jpeg', 0.88))).arrayBuffer()}); }, layout === '1' ? 2 : 1.4);
+      busy('Making PDF…'); const pdf = await PDFLib.PDFDocument.create(); pdf.setTitle(deck.name + ' – handouts'); pdf.setCreator('SRK Slides'); const font = await pdf.embedFont(PDFLib.StandardFonts.Helvetica);
+      const PW = 595.28, PH = 841.89, M = 36, ar = deck.size.h / deck.size.w; const gray = PDFLib.rgb(.6, .6, .6);
+      const put = async (page, im, x, y, w) => { const e = await pdf.embedJpg(im.jpg); const hh = w * ar; page.drawImage(e, {x, y: y - hh, width: w, height: hh}); if (frame) page.drawRectangle({x, y: y - hh, width: w, height: hh, borderColor: gray, borderWidth: .6}); return hh; };
+      const foot = (page, n) => page.drawText(String(n), {x: PW / 2 - 4, y: 18, size: 9, font, color: gray});
+      if (layout === '1'){ for (const im of imgs){ const e = await pdf.embedJpg(im.jpg); const p = pdf.addPage([deck.size.w, deck.size.h]); p.drawImage(e, {x: 0, y: 0, width: deck.size.w, height: deck.size.h}); } }
+      else if (layout === 'notes'){
+        await needCanvas(); const host = h('div', {class: 'offscreen'}); document.body.append(host);
+        for (const [n, im] of imgs.entries()){ const s = deck.slides[im.i]; const pg = h('div', {class: 'notespage'}); const url = URL.createObjectURL(new Blob([im.jpg], {type: 'image/jpeg'}));
+          pg.append(h('img', {src: url, alt: ''}), h('div', {class: 'nptext'}, s.notes || ''), h('div', {class: 'npnum'}, String(im.i + 1))); host.innerHTML = ''; host.append(pg); await pg.querySelector('img').decode().catch(() => {});
+          const cv = await html2canvas(pg, {scale: 2, backgroundColor: '#ffffff', logging: false}); URL.revokeObjectURL(url); const e = await pdf.embedJpg(await (await new Promise(r => cv.toBlob(r, 'image/jpeg', 0.9))).arrayBuffer()); pdf.addPage([PW, PH]).drawImage(e, {x: 0, y: 0, width: PW, height: PH}); }
+        host.remove();
+      } else {
+        const per = +layout, cols = per === 2 || per === 3 ? 1 : per === 4 || per === 6 ? 2 : 3, rows = Math.ceil(per / cols); let pn = 0;
+        for (let i = 0; i < imgs.length; i += per){ const page = pdf.addPage([PW, PH]); pn++;
+          if (per === 3){ const w = (PW - 2 * M) * 0.48, gap = (PH - 2 * M - 3 * w * ar) / 2; for (let j = 0; j < 3 && imgs[i + j]; j++){ const y = PH - M - j * (w * ar + gap); await put(page, imgs[i + j], M, y, w); for (let l = 0; l < 5; l++){ const ly = y - 10 - l * (w * ar - 20) / 4; page.drawLine({start: {x: M + w + 24, y: ly}, end: {x: PW - M, y: ly}, thickness: .5, color: gray}); } } }
+          else { const gapX = 18, w = (PW - 2 * M - (cols - 1) * gapX) / cols, cellH = (PH - 2 * M - 20) / rows, hh = w * ar; for (let j = 0; j < per && imgs[i + j]; j++){ const cx = j % cols, cy = Math.floor(j / cols); await put(page, imgs[i + j], M + cx * (w + gapX), PH - M - cy * cellH - (cellH - hh) / 2, w); } }
+          foot(page, pn); }
+      }
+      const bytes = await pdf.save(); unbusy(); saveFile(new Blob([bytes], {type: 'application/pdf'}), cleanName(deck.name + (layout === 'notes' ? ' notes' : ' handouts'), 'pdf'));
     } catch(e){ unbusy(); toast(e.message || 'Couldn’t make the PDF.', 4000); console.error(e); }
   }
   async function savePngs(){
@@ -188,6 +250,7 @@ const App = (() => {
         item(FI('<path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5M10 14h6M10 17h4"/>'), 'Save as PDF', 'Every slide as a PDF page, for printing or sending', () => savePdf(false)),
         item(FI('<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5-8 8"/>'), 'Save this slide as a picture', 'PNG image of the current slide', saveOnePng),
         item(FI('<path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/>'), 'Save all slides as pictures', 'A .zip of PNG images', savePngs),
+        item(FI('<path d="M6 9V3h12v6M6 17H4a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-2"/><rect x="6" y="14" width="12" height="7"/>'), 'Print & handouts', 'Handouts (2, 3, 4, 6 or 9 per page) or notes pages, as PDF', handoutsDialog),
         h('div', {class: 'fm-sep'}),
         item(FI('<circle cx="18" cy="5.5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="18.5" r="2.5"/><path d="M8.2 10.8l7.6-4M8.2 13.2l7.6 4"/>'), 'Share as PowerPoint', 'Send to WhatsApp, Gmail or Drive', async () => { try { busy('Preparing…'); const b = await makePptx(); unbusy(); shareFile(new Blob([b], {type: PPTX_MIME}), cleanName(deck.name, 'pptx')); } catch(e){ unbusy(); toast(e.message || 'Couldn’t share.'); } }),
         item(FI('<circle cx="18" cy="5.5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="18.5" r="2.5"/><path d="M8.2 10.8l7.6-4M8.2 13.2l7.6 4"/>'), 'Share as PDF', 'Send the slides as a PDF', () => savePdf(true)),
@@ -208,44 +271,7 @@ const App = (() => {
 
   /* ---------------------------------------------------------------- slide show */
   let show = null;
-  function present(from = 0){
-    Editor.flush(); const deck = Editor.deck; if (!deck) return;
-    const ov = h('div', {class: 'show', role: 'dialog', 'aria-label': 'Slide show'}); const stage = h('div', {class: 'sstage'});
-    const ctl = h('div', {class: 'sctl'}); const cnt = h('span', {style: 'flex:1;font-variant-numeric:tabular-nums'});
-    const bPrev = h('button', {type: 'button'}, '‹ Prev'), bNext = h('button', {type: 'button'}, 'Next ›'), bEnd = h('button', {type: 'button'}, 'End show');
-    ctl.append(cnt, bPrev, bNext, bEnd); ov.append(stage, ctl); document.body.append(ov);
-    show = {i: from, ov, stage, ended: false};
-    if (window.SRKSlides && SRKSlides.setLandscape) try { SRKSlides.setLandscape(true); } catch(e){}
-    try { if (!window.SRK_NATIVE && ov.requestFullscreen) ov.requestFullscreen().catch(() => {}); } catch(e){}
-    try { navigator.wakeLock && navigator.wakeLock.request('screen').then(l => show && (show.lock = l)).catch(() => {}); } catch(e){}
-    if (innerHeight > innerWidth && !window.SRKSlides){ const hint = h('div', {class: 'hintrot'}, 'Turn your phone sideways for bigger slides'); ov.append(hint); setTimeout(() => hint.remove(), 3500); }
-    const draw = (anim) => {
-      stage.innerHTML = ''; cnt.textContent = '';
-      if (show.ended){ stage.style.cssText = ''; stage.append(h('div', {class: 'end'}, 'End of slide show. Tap to exit.')); return; }
-      const s = deck.slides[show.i]; const el = renderSlide(s, deck, {edit: false}); const W = deck.size.w, H = deck.size.h;
-      const k = Math.min(innerWidth / W, innerHeight / H); el.style.transform = `scale(${k})`;
-      stage.style.cssText = `width:${W * k}px;height:${H * k}px;margin-left:${-W * k / 2}px;margin-top:${-H * k / 2}px`;
-      const wrap = h('div', {style: `position:absolute;inset:0`}); wrap.append(el); stage.append(wrap);
-      if (anim && s.transition && s.transition !== 'none') wrap.classList.add('tr-' + s.transition);
-      cnt.textContent = `${show.i + 1} / ${deck.slides.length}` + (s.notes ? '  ·  Notes: ' + s.notes.slice(0, 80) + (s.notes.length > 80 ? '…' : '') : '');
-    };
-    const go = d => { if (!show) return; if (show.ended){ if (d < 0){ show.ended = false; draw(false); } else end(); return; } const n = show.i + d; if (n >= deck.slides.length){ show.ended = true; draw(); return; } if (n < 0) return; show.i = n; draw(d > 0); };
-    const end = () => { if (!show) return; try { show.lock && show.lock.release(); } catch(e){} show = null; ov.remove(); document.removeEventListener('keydown', key); removeEventListener('resize', rs);
-      if (window.SRKSlides && SRKSlides.setLandscape) try { SRKSlides.setLandscape(false); } catch(e){} try { if (document.fullscreenElement) document.exitFullscreen(); } catch(e){} Editor.layoutStage(); };
-    const key = e => { if (['ArrowRight', 'ArrowDown', 'PageDown', ' ', 'Enter', 'n'].includes(e.key)){ e.preventDefault(); go(1); } else if (['ArrowLeft', 'ArrowUp', 'PageUp', 'Backspace', 'p'].includes(e.key)){ e.preventDefault(); go(-1); } else if (e.key === 'Escape'){ e.preventDefault(); end(); } else if (e.key === 'Home'){ show.i = 0; show.ended = false; draw(); } else if (e.key === 'End'){ show.i = deck.slides.length - 1; show.ended = false; draw(); } };
-    const rs = () => show && draw(false);
-    document.addEventListener('keydown', key); addEventListener('resize', rs);
-    document.addEventListener('fullscreenchange', function fc(){ if (!document.fullscreenElement && show && !window.SRK_NATIVE && show.fs){ end(); } if (document.fullscreenElement && show) show.fs = true; if (!show) document.removeEventListener('fullscreenchange', fc); });
-    bPrev.addEventListener('click', e => { e.stopPropagation(); go(-1); }); bNext.addEventListener('click', e => { e.stopPropagation(); go(1); }); bEnd.addEventListener('click', e => { e.stopPropagation(); end(); });
-    let sx = null, sy = null, st = 0, uiT;
-    const ui = () => { ov.classList.add('ui'); clearTimeout(uiT); uiT = setTimeout(() => ov.classList.remove('ui'), 2600); };
-    ov.addEventListener('pointerdown', e => { if (e.target.closest('.sctl')) return; sx = e.clientX; sy = e.clientY; st = Date.now(); });
-    ov.addEventListener('pointermove', e => { if (e.pointerType === 'mouse') ui(); });
-    ov.addEventListener('pointerup', e => { if (sx == null) return; const dx = e.clientX - sx, dy = e.clientY - sy; sx = null;
-      if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)){ go(dx < 0 ? 1 : -1); return; }
-      if (Math.abs(dx) < 12 && Math.abs(dy) < 12){ if (e.pointerType !== 'mouse' && !ov.classList.contains('ui') && e.clientY > innerHeight * 0.75){ ui(); return; } go(e.clientX < innerWidth * 0.3 ? -1 : 1); } });
-    draw(false); ui();
-  }
+  const present = from => Show.present(from);
 
   /* ---------------------------------------------------------------- views */
   let saveT = null;
@@ -298,10 +324,10 @@ const App = (() => {
   $('#playBtn').addEventListener('click', () => present(Editor.cur));
   $('#docTitle').addEventListener('change', () => { if (!Editor.deck) return; Editor.deck.name = $('#docTitle').value.trim() || 'Presentation'; $('#docTitle').value = Editor.deck.name; Editor.deck.updated = Date.now(); scheduleSave(); });
   $('#docTitle').addEventListener('keydown', e => { if (e.key === 'Enter') e.target.blur(); });
-  addEventListener('popstate', () => { if (show){ return; } if (!$('#editView').hidden) goHome(); });
+  addEventListener('popstate', () => { if (document.querySelector('.show')){ return; } if (!$('#editView').hidden) goHome(); });
   if (!window.SRK_NATIVE){ try { if (window.self !== window.top) $('#tipBox').hidden = false; } catch(e){ $('#tipBox').hidden = false; } }
   renderTemplates(); renderOpen(); renderRecent();
   if (window.SRK_NATIVE && window.SRKSlides && SRKSlides.pendingIncoming){ try { const n = SRKSlides.pendingIncoming(); if (n) window.srkOpenIncoming(n); } catch(e){} }
 
-  return {imageToData, fileMenu, present, savePptx, toggleTheme, Store, makePptx, exportModel, openBytes};
+  return {imageToData, fileMenu, present, savePptx, toggleTheme, Store, makePptx, exportModel, openBytes, dialog, info, bakeDeck, previewTransition: () => Show.previewTransition(), previewAnims: ids => Show.previewAnims(ids)};
 })();

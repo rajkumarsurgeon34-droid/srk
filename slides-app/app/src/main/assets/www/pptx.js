@@ -185,13 +185,13 @@ async function readPptx(bytes){
         if (!box) continue; box = tf(box);
         const rot = xf && at(xf, 'rot') ? (+at(xf, 'rot')) / 60000 : 0; const flipH = xf && at(xf, 'flipH') === '1', flipV = xf && at(xf, 'flipV') === '1';
         const base = {id: uidS(), x: r1(box.x), y: r1(box.y), w: r1(Math.max(box.w, 1)), h: r1(Math.max(box.h, t === 'cxnSp' ? 0 : 1)), rot: Math.round(rot)};
-        if (t === 'pic'){ const blip = descN(el, 'blip')[0]; const src = blip ? await media(jp(sp, (slide.rels[rid(blip)] || {}).target)) : null; if (src) objects.push({...base, kind: 'image', src}); continue; }
+        if (t === 'pic'){ const blip = descN(el, 'blip')[0]; const src = blip ? await media(jp(sp, (slide.rels[rid(blip)] || {}).target)) : null; if (src){ const sr = descN(el, 'srcRect')[0]; const cr = sr ? {l: (+at(sr, 'l') || 0) / 1e5, t: (+at(sr, 't') || 0) / 1e5, r: (+at(sr, 'r') || 0) / 1e5, b: (+at(sr, 'b') || 0) / 1e5} : null; objects.push({...base, kind: 'image', src, ...(cr && (cr.l || cr.t || cr.r || cr.b) ? {crop: cr} : {})}); } continue; }
         if (t === 'graphicFrame'){
           const tbl = descN(el, 'tbl')[0];
           if (tbl){ const rows = descN(tbl, 'tr').map(tr => kidsN(tr, 'tc').map(tc => { const body = kidN(tc, 'txBody'); return {html: body ? txHtml(body, {}) : '', fill: fillOf(kidN(tc, 'tcPr')) || null}; }));
             const fs = descN(tbl, 'rPr').map(r => at(r, 'sz')).find(Boolean);
             objects.push({...base, kind: 'table', rows: rows.map(r => r.map(c => c.html)), fills: rows.map(r => r.map(c => c.fill)), header: at(descN(tbl, 'tblPr')[0], 'firstRow') === '1', size: fs ? +fs / 100 : 14}); }
-          else objects.push({...base, kind: 'box', geom: 'rect', fill: '#f2f3f7', line: {color: '#b8bfd0', width: 1}, html: '<p style="text-align:center">Chart (shown as a placeholder)</p>', anchor: 'ctr', style: {size: 14, color: '#5b6380'}});
+          else { const ch = await readChart(el); if (ch) objects.push({...base, ...ch}); else objects.push({...base, kind: 'box', geom: 'rect', fill: '#f2f3f7', line: {color: '#b8bfd0', width: 1}, html: '<p style="text-align:center">Diagram (shown as a placeholder)</p>', anchor: 'ctr', style: {size: 14, color: '#5b6380'}}); }
           continue;
         }
         const geomEl = descN(spPr, 'prstGeom')[0]; let geom = t === 'cxnSp' ? 'line' : (at(geomEl, 'prst') || 'rect'); if (descN(spPr, 'custGeom')[0]) geom = 'rect';
@@ -216,13 +216,26 @@ async function readPptx(bytes){
         objects.push(obj);
       }
     }
+    async function readChart(gf){
+      try { const cEl = descN(gf, 'chart')[0]; if (!cEl) return null; const rel = slide.rels[rid(cEl)]; if (!rel) return null; const cx = await txt(jp(sp, rel.target)); if (!cx) return null; const cd = px(cx).documentElement;
+        const plot = descN(cd, 'plotArea')[0]; if (!plot) return null; const kinds = ['barChart', 'bar3DChart', 'lineChart', 'line3DChart', 'areaChart', 'pieChart', 'pie3DChart', 'doughnutChart']; const ce = [...plot.children].find(c => kinds.includes(lname(c))); if (!ce) return null;
+        const k = lname(ce); const dir = at(descN(ce, 'barDir')[0], 'val'); const chart = /bar/.test(k) ? (dir === 'bar' ? 'bar' : 'column') : /line/.test(k) ? 'line' : /area/.test(k) ? 'area' : /doughnut/.test(k) ? 'doughnut' : 'pie';
+        const pts = el => { if (!el) return []; const out = []; for (const pt of descN(el, 'pt')) out[+at(pt, 'idx')] = (descN(pt, 'v')[0] || {}).textContent; return out; };
+        const sers = kidsN(ce, 'ser'); if (!sers.length) return null; let labels = [];
+        const series = sers.map((s, i) => { const name = (descN(kidN(s, 'tx'), 'v')[0] || {}).textContent || `Series ${i + 1}`; const cat = pts(kidN(s, 'cat')); if (cat.length > labels.length) labels = cat; return {name, values: pts(kidN(s, 'val')).map(v => +v || 0)}; });
+        if (!labels.length) labels = series[0].values.map((_, i) => String(i + 1)); labels = labels.map(l => l == null ? '' : String(l)); series.forEach(s => { while (s.values.length < labels.length) s.values.push(0); });
+        const title = descN(descN(cd, 'title')[0], 't').map(t => t.textContent).join('') || '';
+        return {kind: 'chart', chart, data: {labels, series}, title, legend: !!descN(cd, 'legend')[0], labels: chart === 'pie' || chart === 'doughnut'};
+      } catch(e){ return null; }
+    }
     const tree = descN(slide.doc, 'spTree')[0]; if (tree) await walk(tree, b => b);
     /* speaker notes */
     let notes = '';
     const nRel = Object.values(slide.rels).find(r => /notesSlide/.test(r.type));
     if (nRel){ const nx = await txt(jp(sp, nRel.target)); if (nx){ const nd = px(nx).documentElement;
       for (const s of descN(nd, 'sp')){ const ph = descN(s, 'ph')[0]; if (ph && (at(ph, 'type') || 'body') === 'body'){ notes = descN(s, 'p').map(p => descN(p, 't').map(t => t.textContent).join('')).join('\n').trim(); break; } } } }
-    slides.push({id: uidS(), bg, transition, notes, objects});
+    const hidden = at(slide.doc.documentElement, 'show') === '0';
+    slides.push({id: uidS(), bg, transition, notes, objects, ...(hidden ? {hidden: true} : {})});
   }
   return {size: {w: r1(W), h: r1(H)}, slides, fonts: {head: theme.major, body: theme.minor}};
 }
@@ -230,13 +243,14 @@ const r1 = n => Math.round(n * 10) / 10;
 
 /* ================================================================ WRITER */
 /* html of a text box → PptxGenJS text runs */
-function htmlRuns(html, base){
+function htmlRuns(html, base, opt = {}){
   const holder = document.createElement('div'); holder.innerHTML = html || '';
   const paras = []; // {runs:[], align, bullet, indent}
   function para(el, extra){ const p = {runs: [], align: null, bullet: null, indent: 0, ...extra}; const ta = el && el.style && el.style.textAlign; if (ta) p.align = ta === 'justify' ? 'justify' : ta; const ml = el && el.style && parseFloat(el.style.marginLeft); if (ml) p.indent = Math.min(8, Math.round(ml / 24)); paras.push(p); return p; }
   function fmt(el, f){
     f = {...f}; const t = el.tagName;
     if (t === 'B' || t === 'STRONG') f.bold = true; if (t === 'I' || t === 'EM') f.italic = true; if (t === 'U') f.underline = true; if (t === 'S' || t === 'STRIKE' || t === 'DEL') f.strike = true;
+    if (t === 'A' && el.getAttribute('href')) f.link = el.getAttribute('href');
     if (t === 'SUP') f.superscript = true; if (t === 'SUB') f.subscript = true;
     if (t === 'FONT'){ if (el.getAttribute('color')) f.color = el.getAttribute('color'); if (el.getAttribute('face')) f.fontFace = el.getAttribute('face'); }
     const st = el.style; if (st){
@@ -284,54 +298,123 @@ function htmlRuns(html, base){
       const o = {...po}; const f = r.f;
       if (f.bold) o.bold = true; if (f.italic) o.italic = true; if (f.underline) o.underline = {style: 'sng'}; if (f.strike) o.strike = 'sngStrike';
       if (f.superscript) o.superscript = true; if (f.subscript) o.subscript = true; if (f.color) o.color = hex(f.color); if (f.highlight) o.highlight = hex(f.highlight);
-      if (f.fontSize) o.fontSize = f.fontSize; if (f.fontFace) o.fontFace = f.fontFace;
+      if (f.fontSize) o.fontSize = Math.round(f.fontSize * (opt.k || 1) * 2) / 2; if (f.fontFace) o.fontFace = f.fontFace; if (f.link) o.hyperlink = {url: f.link};
+      if (opt.line) o.lineSpacingMultiple = opt.line; if (opt.after != null) o.paraSpaceAfter = opt.after;
       if (last) o.breakLine = true;
       out.push({text: r.text, options: o});
     });
   });
   return out;
 }
-const TRANSITION_XML = { fade: '<p:transition spd="med"><p:fade/></p:transition>', push: '<p:transition spd="med"><p:push dir="u"/></p:transition>', wipe: '<p:transition spd="med"><p:wipe dir="r"/></p:transition>', zoom: '<p:transition spd="med"><p:zoom/></p:transition>' };
+/* transitions and animations PptxGenJS doesn't write: injected into each slide's XML */
+function transitionXml(s){
+  const t = s.transition || 'none'; if (t === 'none' && !s.advance) return '';
+  const ms = (s.trDur || 0.8) * 1000, spd = ms <= 600 ? 'fast' : ms <= 1000 ? 'med' : 'slow', adv = s.advance ? ` advTm="${Math.round(s.advance * 1000)}"` : '';
+  const d = s.trDir; const inner = {fade: '<p:fade/>', morph: '<p:fade/>', flip: '<p:fade/>', push: `<p:push dir="${d || 'u'}"/>`, wipe: `<p:wipe dir="${({r: 'r', l: 'l', d: 'd', u: 'u'})[d] || 'r'}"/>`, split: '<p:split orient="vert" dir="out"/>', cover: `<p:cover dir="${d || 'l'}"/>`, uncover: `<p:pull dir="${d || 'l'}"/>`, zoom: '<p:zoom/>', none: ''}[t] || '<p:fade/>';
+  return `<p:transition spd="${spd}"${adv}>${inner}</p:transition>`;
+}
+const ANIM_PRESET = {appear: [1, 'entr', 0], fade: [10, 'entr', 0], fly: [2, 'entr', 4], float: [42, 'entr', 0], wipe: [22, 'entr', 8], zoom: [53, 'entr', 16], grow: [31, 'entr', 0], bounce: [26, 'entr', 0],
+  pulse: [26, 'emph', 0], spin: [8, 'emph', 0], teeter: [32, 'emph', 0], grow2: [6, 'emph', 0], fadeout: [10, 'exit', 0], flyout: [2, 'exit', 4], zoomout: [53, 'exit', 16], disappear: [1, 'exit', 0]};
+function timingXml(anims, spid){
+  const list = (anims || []).filter(x => spid[x.obj]); if (!list.length) return {xml: '', bld: ''};
+  let id = 3; const nid = () => id++;
+  const tgt = sp => `<p:tgtEl><p:spTgt spid="${sp}"/></p:tgtEl>`;
+  const vis = (sp, val, delay = 0) => `<p:set><p:cBhvr><p:cTn id="${nid()}" dur="1" fill="hold"><p:stCondLst><p:cond delay="${delay}"/></p:stCondLst></p:cTn>${tgt(sp)}<p:attrNameLst><p:attrName>style.visibility</p:attrName></p:attrNameLst></p:cBhvr><p:to><p:strVal val="${val}"/></p:to></p:set>`;
+  const prop = (sp, attr, from, to, dur) => `<p:anim calcmode="lin" valueType="num"><p:cBhvr additive="base"><p:cTn id="${nid()}" dur="${dur}" fill="hold"/>${tgt(sp)}<p:attrNameLst><p:attrName>${attr}</p:attrName></p:attrNameLst></p:cBhvr><p:tavLst><p:tav tm="0"><p:val><p:strVal val="${from}"/></p:val></p:tav><p:tav tm="100000"><p:val><p:strVal val="${to}"/></p:val></p:tav></p:tavLst></p:anim>`;
+  const effect = (x, sp, dur) => { const f = x.fx; const D = Math.max(1, dur);
+    switch (f){
+      case 'appear': return vis(sp, 'visible');
+      case 'fade': return vis(sp, 'visible') + `<p:animEffect transition="in" filter="fade"><p:cBhvr><p:cTn id="${nid()}" dur="${D}"/>${tgt(sp)}</p:cBhvr></p:animEffect>`;
+      case 'fly': case 'bounce': return vis(sp, 'visible') + prop(sp, 'ppt_x', '#ppt_x', '#ppt_x', D) + prop(sp, 'ppt_y', f === 'bounce' ? '0-#ppt_h/2' : '1+#ppt_h/2', '#ppt_y', D);
+      case 'float': return vis(sp, 'visible') + `<p:animEffect transition="in" filter="fade"><p:cBhvr><p:cTn id="${nid()}" dur="${D}"/>${tgt(sp)}</p:cBhvr></p:animEffect>` + prop(sp, 'ppt_y', '#ppt_y+.1', '#ppt_y', D);
+      case 'wipe': return vis(sp, 'visible') + `<p:animEffect transition="in" filter="wipe(left)"><p:cBhvr><p:cTn id="${nid()}" dur="${D}"/>${tgt(sp)}</p:cBhvr></p:animEffect>`;
+      case 'zoom': case 'grow': return vis(sp, 'visible') + prop(sp, 'ppt_w', '0', '#ppt_w', D) + prop(sp, 'ppt_h', '0', '#ppt_h', D) + `<p:animEffect transition="in" filter="fade"><p:cBhvr><p:cTn id="${nid()}" dur="${D}"/>${tgt(sp)}</p:cBhvr></p:animEffect>`;
+      case 'spin': return `<p:animRot by="21600000"><p:cBhvr><p:cTn id="${nid()}" dur="${D}" fill="hold"/>${tgt(sp)}<p:attrNameLst><p:attrName>r</p:attrName></p:attrNameLst></p:cBhvr></p:animRot>`;
+      case 'pulse': case 'teeter': case 'grow2': return `<p:animScale><p:cBhvr><p:cTn id="${nid()}" dur="${D}" fill="hold"${f === 'grow2' ? '' : ' autoRev="1"'}/>${tgt(sp)}</p:cBhvr><p:by x="${f === 'grow2' ? 125000 : 110000}" y="${f === 'grow2' ? 125000 : 110000}"/></p:animScale>`;
+      case 'fadeout': return `<p:animEffect transition="out" filter="fade"><p:cBhvr><p:cTn id="${nid()}" dur="${D}"/>${tgt(sp)}</p:cBhvr></p:animEffect>` + vis(sp, 'hidden', D - 1);
+      case 'flyout': return prop(sp, 'ppt_x', '#ppt_x', '#ppt_x', D) + prop(sp, 'ppt_y', '#ppt_y', '1+#ppt_h/2', D) + vis(sp, 'hidden', D - 1);
+      case 'zoomout': return prop(sp, 'ppt_w', '#ppt_w', '0', D) + prop(sp, 'ppt_h', '#ppt_h', '0', D) + vis(sp, 'hidden', D - 1);
+      default: return vis(sp, 'hidden');
+    } };
+  // click groups → inner sequences
+  const groups = []; let g = null;
+  list.forEach((x, i) => { if (!g || x.start === 'click'){ g = {first: i === 0 ? x.start : 'click', seqs: []}; groups.push(g); g.seqs.push({delay: 0, items: []}); }
+    const cur = g.seqs[g.seqs.length - 1]; if (x.start === 'after' && cur.items.length){ const end = Math.max(...cur.items.map(it => (it.delay || 0) + it.dur)) + cur.delay; g.seqs.push({delay: end, items: []}); }
+    g.seqs[g.seqs.length - 1].items.push({x, dur: Math.round((x.dur || 0) * 1000), delay: Math.round((x.delay || 0) * 1000)}); });
+  let body = '';
+  for (const gr of groups){
+    const outerCond = gr.first === 'click' ? '<p:cond delay="indefinite"/>' : '<p:cond delay="indefinite"/><p:cond evt="onBegin" delay="0"><p:tn val="2"/></p:cond>';
+    let seqs = '';
+    for (const sq of gr.seqs){ let items = '';
+      for (const it of sq.items){ const [pid, cls, sub] = ANIM_PRESET[it.x.fx] || ANIM_PRESET.fade; const nt = it === gr.seqs[0].items[0] && sq === gr.seqs[0] ? (gr.first === 'click' ? 'clickEffect' : gr.first === 'after' ? 'afterEffect' : 'withEffect') : it.x.start === 'after' ? 'afterEffect' : 'withEffect';
+        const cid = nid(); items += `<p:par><p:cTn id="${cid}" presetID="${pid}" presetClass="${cls}" presetSubtype="${sub}" fill="hold" grpId="0" nodeType="${nt}"><p:stCondLst><p:cond delay="${it.delay}"/></p:stCondLst><p:childTnLst>${effect(it.x, spid[it.x.obj], it.dur)}</p:childTnLst></p:cTn></p:par>`; }
+      seqs += `<p:par><p:cTn id="${nid()}" fill="hold"><p:stCondLst><p:cond delay="${sq.delay}"/></p:stCondLst><p:childTnLst>${items}</p:childTnLst></p:cTn></p:par>`; }
+    body += `<p:par><p:cTn id="${nid()}" fill="hold"><p:stCondLst>${outerCond}</p:stCondLst><p:childTnLst>${seqs}</p:childTnLst></p:cTn></p:par>`;
+  }
+  const xml = `<p:timing><p:tnLst><p:par><p:cTn id="1" dur="indefinite" restart="never" nodeType="tmRoot"><p:childTnLst><p:seq concurrent="1" nextAc="seek"><p:cTn id="2" dur="indefinite" nodeType="mainSeq"><p:childTnLst>${body}</p:childTnLst></p:cTn><p:prevCondLst><p:cond evt="onPrev" delay="0"><p:tgtEl><p:sldTgt/></p:tgtEl></p:cond></p:prevCondLst><p:nextCondLst><p:cond evt="onNext" delay="0"><p:tgtEl><p:sldTgt/></p:tgtEl></p:cond></p:nextCondLst></p:seq></p:childTnLst></p:cTn></p:par></p:tnLst>`;
+  const bld = [...new Set(list.map(x => spid[x.obj]))].filter(sp => spid._text && spid._text.has(sp)).map(sp => `<p:bldP spid="${sp}" grpId="0" animBg="1"/>`).join('');
+  let n = 0; const fixed = xml.replace(/<p:cTn id="\d+"/g, () => `<p:cTn id="${++n}"`); // ids in document order
+  return {xml: fixed + (bld ? `<p:bldLst>${bld}</p:bldLst>` : '') + '</p:timing>'};
+}
 async function writePptx(deck, {resolveBg}){
   const pres = new PptxGenJS();
   pres.defineLayout({name: 'SRK', width: deck.size.w / 72, height: deck.size.h / 72}); pres.layout = 'SRK';
   pres.title = deck.name || 'Presentation'; pres.author = 'SRK Slides'; pres.company = 'SRK Slides';
   const I = v => Math.round(v / 72 * 1000) / 1000; const H = c => c ? c.replace('#', '').toUpperCase().slice(0, 6) : undefined;
+  const SHADOW = {type: 'outer', blur: 5, offset: 3, angle: 45, color: '000000', opacity: 0.35};
   for (const s of deck.slides){
-    const sl = pres.addSlide();
+    const sl = pres.addSlide(); if (s.hidden) sl.hidden = true;
     const bg = await resolveBg(s); if (bg.image) sl.background = {data: bg.image}; else if (bg.color) sl.background = {color: H(bg.color)};
     for (const o of s.objects){
+      const name = 'srk-' + o.id; const fx = o.fx || {};
       const pos = {x: I(o.x), y: I(o.y), w: I(Math.max(o.w, 1)), h: I(Math.max(o.h, o.kind === 'box' && o.geom === 'line' ? 0 : 1))}; if (o.rot) pos.rotate = o.rot;
-      if (o.kind === 'image'){ sl.addImage({data: o.src, ...pos, ...(o.flipH ? {flipH: true} : {}), ...(o.flipV ? {flipV: true} : {})}); continue; }
-      if (o.kind === 'table'){
-        const st = o.resolved || {}; const tint = c => { const v = parseInt((c || '#4472C4').replace('#', '').slice(0, 6), 16); return '#' + [16, 8, 0].map(k => Math.round(255 - (255 - ((v >> k) & 255)) * 0.12).toString(16).padStart(2, '0')).join(''); };
-        const rows = o.rows.map((r, ri) => r.map((cell, ci) => { const runs = htmlRuns(cell); const fill = (o.fills && o.fills[ri] && o.fills[ri][ci]) || (o.header && ri === 0 ? st.accent : (o.band && ri % 2 === 0 ? tint(st.accent) : null));
-          return {text: runs.length ? runs : '', options: {fontSize: o.size || 14, fontFace: st.font, color: H(o.header && ri === 0 ? '#FFFFFF' : st.color), bold: o.header && ri === 0, fill: fill ? {color: H(fill)} : undefined, valign: 'middle', margin: [3, 5, 3, 5]}}; }));
-        sl.addTable(rows, {x: pos.x, y: pos.y, w: pos.w, colW: Array(o.rows[0].length).fill(pos.w / o.rows[0].length), border: {type: 'solid', pt: 0.75, color: H(st.border || '#7f7f7f')}, autoPage: false});
+      if (o.kind === 'image'){ sl.addImage({data: o.src, ...pos, objectName: name, altText: o.alt || '', ...(fx.opacity != null && fx.opacity < 1 ? {transparency: Math.round((1 - fx.opacity) * 100)} : {}), ...(o.flipH ? {flipH: true} : {}), ...(o.flipV ? {flipV: true} : {})}); continue; }
+      if (o.kind === 'chart'){
+        const types = {column: 'bar', bar: 'bar', line: 'line', area: 'area', pie: 'pie', doughnut: 'doughnut'}; const pie = o.chart === 'pie' || o.chart === 'doughnut';
+        const d = o.data || {labels: [], series: []}; const data = (pie ? d.series.slice(0, 1) : d.series).map(se => ({name: se.name, labels: d.labels.map(String), values: d.labels.map((_, i) => +se.values[i] || 0)}));
+        const pal = (o.palette || []).map(H), ink = H(o.ink || '#333333');
+        sl.addChart(pres.ChartType[types[o.chart] || 'bar'], data, {...pos, objectName: name, barDir: o.chart === 'bar' ? 'bar' : 'col', chartColors: pal, showLegend: o.legend !== false, legendPos: 'b', legendColor: ink, legendFontSize: o.fontSize || 12,
+          showTitle: !!o.title, title: o.title || undefined, titleColor: ink, titleFontSize: (o.fontSize || 12) * 1.4, showValue: !!o.labels, showPercent: pie && o.labels !== false, dataLabelColor: pie ? 'FFFFFF' : ink, dataLabelFontSize: (o.fontSize || 12) * .9,
+          catAxisLabelColor: ink, valAxisLabelColor: ink, catAxisLabelFontSize: o.fontSize || 12, valAxisLabelFontSize: o.fontSize || 12, valGridLine: {color: 'D9D9D9', size: 0.5}, holeSize: 55, fontFace: o.font, lineSize: 2.5, lineDataSymbolSize: 7});
         continue;
       }
-      const st = o.resolved || {};
-      const shapeOpts = {...pos, fill: o.fill ? {color: H(o.fill)} : undefined, line: o.line ? {color: H(o.line.color), width: o.line.width, ...(o.line.dash ? {dashType: 'dash'} : {})} : undefined};
+      if (o.kind === 'table'){
+        const st = o.resolved || {};
+        const rows = o.rows.map((r, ri) => r.map((cell, ci) => { const runs = htmlRuns(cell); const lk = typeof tableCellLook === 'function' ? tableCellLook(o, st, ri, ci) : {bg: o.header && ri === 0 ? st.accent : null, fg: o.header && ri === 0 ? '#FFFFFF' : null, bold: o.header && ri === 0, border: st.border};
+          return {text: runs.length ? runs : '', options: {fontSize: o.size || 14, fontFace: st.font, color: H(lk.fg || st.color), bold: lk.bold, fill: lk.bg ? {color: H(lk.bg)} : undefined, valign: 'middle', margin: [3, 5, 3, 5], border: lk.border === 'transparent' ? [{type: 'none'}, {type: 'none'}, {type: 'none'}, {type: 'none'}] : {type: 'solid', pt: 0.75, color: H(lk.border || '#7f7f7f')}}}; }));
+        sl.addTable(rows, {x: pos.x, y: pos.y, w: pos.w, colW: Array(o.rows[0].length).fill(pos.w / o.rows[0].length), autoPage: false, objectName: name});
+        continue;
+      }
+      const st = o.resolved || {}; const k = o.fit && o.fit < 1 && (o.ph || o.autofit) && o.autofit !== false ? o.fit : 1;
+      const fillC = o.grad ? o.grad.a : o.fill;
+      const shapeOpts = {...pos, objectName: name, fill: fillC ? {color: H(fillC), ...(fx.fillAlpha != null && fx.fillAlpha < 1 ? {transparency: Math.round((1 - fx.fillAlpha) * 100)} : fx.opacity != null && fx.opacity < 1 ? {transparency: Math.round((1 - fx.opacity) * 100)} : {})} : undefined,
+        line: o.line ? {color: H(o.line.color), width: o.line.width, ...(o.line.dash ? {dashType: 'dash'} : {})} : undefined, ...(fx.shadow ? {shadow: SHADOW} : {})};
       if (o.flipH) shapeOpts.flipH = true; if (o.flipV) shapeOpts.flipV = true;
       if (o.geom === 'roundRect') shapeOpts.rectRadius = Math.min(pos.w, pos.h) * 0.16;
-      const runs = o.html && o.html.replace(/<[^>]+>/g, '').trim() ? htmlRuns(o.html) : null;
+      const sp = o.spacing || {};
+      const runs = o.html && o.html.replace(/<[^>]+>/g, '').trim() ? htmlRuns(o.html, null, {k, line: sp.line, after: sp.after}) : null;
       if (runs){
-        sl.addText(runs, {...shapeOpts, shape: o.geom === 'rect' ? undefined : (pres.ShapeType[o.geom] || o.geom), fontFace: st.font, fontSize: st.size, color: H(st.color), bold: !!st.bold, italic: !!st.italic, align: o.align || undefined, valign: ({t: 'top', ctr: 'middle', b: 'bottom'})[o.anchor || 't'], margin: [3.6, 7.2, 3.6, 7.2], vert: o.vert ? 'vert' : undefined, paraSpaceAfter: 0});
-      } else if (o.fill || o.line){
+        sl.addText(runs, {...shapeOpts, shape: o.geom === 'rect' ? undefined : (pres.ShapeType[o.geom] || o.geom), fontFace: st.font, fontSize: Math.round(st.size * k * 2) / 2, color: H(st.color), bold: !!st.bold, italic: !!st.italic, align: o.align || undefined, valign: ({t: 'top', ctr: 'middle', b: 'bottom'})[o.anchor || 't'], margin: [3.6, 7.2, 3.6, 7.2], vert: o.vert ? 'vert' : undefined, paraSpaceAfter: sp.after || 0, ...(sp.line ? {lineSpacingMultiple: sp.line} : {}), ...(o.cols > 1 ? {columns: o.cols} : {}), ...(o.textShadow ? {shadow: SHADOW} : {})});
+      } else if (fillC || o.line){
         sl.addShape(pres.ShapeType[o.geom] || o.geom, shapeOpts);
       }
     }
     if (s.notes) sl.addNotes(s.notes);
   }
   const bytes = await pres.write({outputType: 'uint8array'});
-  // PowerPoint transitions (PptxGenJS does not write them)
-  if (!deck.slides.some(s => s.transition && s.transition !== 'none')) return bytes;
+  const need = deck.slides.some(s => (s.transition && s.transition !== 'none') || s.advance || (s.anims && s.anims.length));
+  if (!need) return bytes;
   const z = await JSZip.loadAsync(bytes);
   for (let i = 0; i < deck.slides.length; i++){
-    const tr = TRANSITION_XML[deck.slides[i].transition]; if (!tr) continue;
-    const p = `ppt/slides/slide${i + 1}.xml`; const f = z.file(p); if (!f) continue;
-    let x = await f.async('string'); if (x.includes('<p:transition')) continue;
-    x = x.includes('<p:timing') ? x.replace('<p:timing', tr + '<p:timing') : x.replace('</p:sld>', tr + '</p:sld>');
+    const s = deck.slides[i]; const p = `ppt/slides/slide${i + 1}.xml`; const f = z.file(p); if (!f) continue;
+    let x = await f.async('string'); let add = '';
+    const tr = transitionXml(s); if (tr && !x.includes('<p:transition')) add += tr;
+    if (s.anims && s.anims.length && !x.includes('<p:timing')){
+      const spid = {}; spid._text = new Set(); const re = /<p:(sp|pic|graphicFrame)>\s*<p:nv\w+Pr>\s*<p:cNvPr id="(\d+)" name="srk-([^"]+)"/g; let m; while ((m = re.exec(x))){ spid[m[3]] = m[2]; if (m[1] === 'sp') spid._text.add(m[2]); }
+      add += timingXml(s.anims, spid).xml;
+    }
+    if (!add) continue;
+    x = x.includes('<p:extLst>') && x.lastIndexOf('<p:extLst>') > x.lastIndexOf('</p:cSld>') ? x.slice(0, x.lastIndexOf('<p:extLst>')) + add + x.slice(x.lastIndexOf('<p:extLst>')) : x.replace('</p:sld>', add + '</p:sld>');
     z.file(p, x);
   }
   return z.generateAsync({type: 'uint8array', compression: 'DEFLATE', mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation'});

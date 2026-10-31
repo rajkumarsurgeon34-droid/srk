@@ -7,7 +7,7 @@ OUT = 'app/src/main/assets/www'
 shutil.rmtree(OUT, ignore_errors=True); os.makedirs(OUT + '/libs')
 for name, src in {'jszip.min.js': f'{LIBS}/jszip.min.js', 'pdf-lib.min.js': f'{LIBS}/pdf-lib.min.js', 'html2canvas.min.js': f'{LIBS}/html2canvas.min.js', 'pptxgen.bundle.js': f'{LIBS}/pptxgen.bundle.js'}.items():
     shutil.copy(src, f'{OUT}/libs/{name}')
-for f in ('pptx.js', 'themes.js', 'model.js', 'editor.js', 'app.js'): shutil.copy(os.path.join(WEB, f), OUT)
+for f in ('pptx.js', 'themes.js', 'charts.js', 'model.js', 'editor.js', 'features.js', 'features2.js', 'show.js', 'app.js'): shutil.copy(os.path.join(WEB, f), OUT)
 shutil.copy('web/native.js', OUT)
 body = open(os.path.join(WEB, 'index.html')).read()
 body = re.sub(r'<script src="https://cdnjs[^"]+/jszip\.min\.js"></script>', '<script src="libs/jszip.min.js"></script>', body)
