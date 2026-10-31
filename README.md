@@ -21,3 +21,12 @@ Word document reader and editor for Android, in `docs-app/`. Opens .docx files w
 
 - Source pages: `docs-app/web-src/`; `build_assets.py` bundles them with JSZip 3.10.1, pdf-lib 1.17.1 and html2canvas 1.4.1 into `app/src/main/assets/www` so the app works offline.
 - Pushes that change `docs-app/` build `SRK-Docs.apk` and publish it under Releases (tags `docs-v1.0.N`). The SRK PDF app only rebuilds when its own files change.
+
+---
+
+# SRK Slides
+
+PowerPoint-style presentation maker for Android, in `slides-app/`. Opens .pptx files (text, bullets, shapes, pictures, tables, backgrounds, speaker notes, transitions), edits them on a slide canvas with a PowerPoint-style ribbon (layouts, 8 themes, fonts and colours, shapes, pictures and camera photos, tables, arrange and align, transitions), plays full-screen slide shows in landscape, and saves real .pptx files that open in PowerPoint and Google Slides, plus PDF and PNG pictures.
+
+- Source pages: `slides-app/web-src/`; `build_assets.py` bundles them with JSZip 3.10.1, pdf-lib 1.17.1, html2canvas 1.4.1 and PptxGenJS 4.0.1 into `app/src/main/assets/www` so the app works offline.
+- Pushes that change `slides-app/` build `SRK-Slides.apk` and publish it under Releases (tags `slides-v1.0.N`).
