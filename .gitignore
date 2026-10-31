@@ -5,3 +5,4 @@ local.properties
 *.iml
 .idea/
 slides-app/app/src/main/assets/www/fonts/
+sheets-app/app/src/main/assets/www/fonts/
