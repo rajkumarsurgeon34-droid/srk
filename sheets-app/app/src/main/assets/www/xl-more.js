@@ -114,7 +114,8 @@ const More = (() => {
         const def = {id: ex ? ex.id : uid(), src: {sheetId: srcSheet.id, g: {...src}}, rows: +rows.value, rows2: rows2.value === '' ? null : +rows2.value, cols: cols.value === '' ? null : +cols.value, vals: [...valBox.children].map(r => ({f: +r.children[0].value, agg: r.children[1].value})), show: show.value, filter: filt.value === '' ? null : {f: +filt.value, vals: [...fval.selectedOptions].map(o => o.value)}};
         let target = ex ? G.wb.sheets.find(s => (s.pivots || []).some(p => p.id === ex.id)) : null;
         if (!ex){ if (where.value === 'new'){ History.wbChange(() => { let n = 1; while (G.wb.sheets.some(s => s.name === 'Pivot' + n)) n++; target = newSheet('Pivot' + n); G.wb.sheets.splice(G.wb.active + 1, 0, target); }, 'PivotTable'); def.at = {r: 2, c: 0}; } else { target = srcSheet; def.at = {r: src.r1, c: src.c2 + 2}; } }
-        else def.at = ex.at;
+        else def.at = {...ex.at};
+        if (def.filter && ![def.rows, def.rows2, def.cols].includes(def.filter.f) && def.at.r < 2) def.at.r = 2; // room for Excel's filter row above the PivotTable
         const i = G.wb.sheets.indexOf(target); if (i !== G.wb.active) Grid.showSheet(i);
         act('PivotTable', () => { target.pivots = (target.pivots || []).filter(p => p.id !== def.id); if (ex && ex.out) clearRange(target, ex.out, 'all'); def.out = buildPivot(target, def); target.pivots.push(def); }, true); UI.tabs(); Grid.select(def.at.r, def.at.c); toast(ex ? 'PivotTable updated' : 'PivotTable ready. Tap it to change fields or refresh.'); }]]); }
   function buildPivot(target, def){ const srcSheet = G.wb.sheets.find(s => s.id === def.src.sheetId); if (!srcSheet) return null; const g = def.src.g; const lab = c => displayAt(srcSheet, g.r1, c).text || colName(c);

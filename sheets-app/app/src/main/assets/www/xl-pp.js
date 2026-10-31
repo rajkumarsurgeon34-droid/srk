@@ -167,6 +167,33 @@ const PP = (() => {
         let s, p; if (ex){ s = wb().sheets.find(x => (x.dmPivots || []).includes(ex)); p = ex; p.cfg = cfg; } else { History.wbChange(() => { let n = 1; while (wb().sheets.some(x => x.name === 'Model Pivot ' + n)) n++; s = newSheet('Model Pivot ' + n); wb().sheets.splice(wb().active + 1, 0, s); }, 'New sheet'); p = {id: uid(), cfg, at: {r: 2, c: 0}}; s.dmPivots = [p]; }
         await build(s, p); Grid.showSheet(wb().sheets.indexOf(s)); UI.tabs(); Calc.invalidate(); Grid.refresh(); UI.onSel(); App.dirty(); toast('Data Model PivotTable ready'); }]]); }
 
+  /* ================================================================ export to a regular Excel PivotTable (flattened data) */
+  const AGG_X = {SUM: 'Sum', AVERAGE: 'Average', MIN: 'Min', MAX: 'Max', COUNT: 'Count', COUNTA: 'Count'};
+  async function flatten(p, extra = []){ const cfg = p.cfg; cache = null; const data = await load(); oneIndex.clear();
+    const need = []; const addF = (t, c) => { const T = data[lc(t)]; if (!T) throw new Error(`Table “${t}” isn’t in the Data Model`); const real = T.cols[colIx(T, c)]; let i = need.findIndex(x => lc(x.t) === lc(t) && lc(x.c) === lc(real)); if (i < 0){ need.push({t: T.name, c: real}); i = need.length - 1; } return i; };
+    const rowF = (cfg.rows || []).map(f => addF(f.t, f.c)); const colF = cfg.cols && cfg.cols[0] ? addF(cfg.cols[0].t, cfg.cols[0].c) : null;
+    const filters = (cfg.filters || []).filter(f => f.vals && f.vals.length).map(f => ({f: addF(f.t, f.c), vals: [...f.vals]}));
+    const extraIx = extra.map(f => addF(f.t, f.c)); const facts = new Set();
+    const tr = (n, depth = 0) => { if (depth > 30) throw new Error('measures refer to each other in a loop');
+      if (n.k === 'meas'){ const m = M().measures.find(x => lc(x.name) === lc(n.name)); if (!m) throw new Error(`measure [${n.name}] wasn’t found`); return tr(ast(m.expr), depth + 1); }
+      if (n.k === 'lit' && typeof n.v === 'number') return {e: String(n.v)};
+      if (n.k === 'fn'){ if (AGG_X[n.name] && n.args.length === 1 && n.args[0].k === 'col'){ facts.add(lc(n.args[0].t)); return {agg: AGG_X[n.name], f: addF(n.args[0].t, n.args[0].c)}; }
+        if (n.name === 'COUNTROWS' && n.args[0] && n.args[0].k === 'tbl'){ const T = data[lc(n.args[0].t)]; if (!T) throw new Error(`table ${n.args[0].t} isn’t in the model`); facts.add(lc(T.name)); return {agg: 'Count', f: addF(T.name, T.cols[0])}; }
+        if (n.name === 'DIVIDE' && n.args.length >= 2) return {e: `(${ex(n.args[0], depth)})/(${ex(n.args[1], depth)})`};
+        throw new Error(n.name === 'DISTINCTCOUNT' ? 'it uses DISTINCTCOUNT' : `it uses ${n.name}`); }
+      if (n.k === 'bin' && ['+', '-', '*', '/'].includes(n.op)) return {e: `(${ex(n.a, depth)})${n.op}(${ex(n.b, depth)})`};
+      if (n.k === 'neg') return {e: `-(${ex(n.v, depth)})`};
+      throw new Error('it uses a formula Excel PivotTables can’t do'); };
+    const ex = (n, depth) => { const r = tr(n, depth + 1); if (r.e != null) return r.e; if (r.agg !== 'Sum') throw new Error(`it uses ${r.agg.toUpperCase()} inside a calculation`); return `\u0001${r.f}\u0001`; };
+    const vals = cfg.values.map(v => { if (v.measure){ const m = M().measures.find(x => lc(x.name) === lc(v.measure)); if (!m) throw new Error(`measure ${v.measure} wasn’t found`); let r; try { r = tr(ast(m.expr)); } catch(e){ throw new Error(`Measure “${m.name}” can’t be a regular Excel PivotTable value: ${e.message}`); } return r.e != null ? {calc: r.e, name: m.name} : {f: r.f, agg: r.agg, name: m.name}; }
+      if (!AGG_X[v.fn]) throw new Error(`${v.fn} of ${v.c} can’t be a regular Excel PivotTable value`); facts.add(lc(v.t)); return {f: addF(v.t, v.c), agg: AGG_X[v.fn]}; });
+    if (facts.size > 1) throw new Error('its values add up rows of more than one table');
+    const used = new Set(need.map(n => lc(n.t))); const cands = facts.size ? [...facts] : M().tables.map(t => lc(t.name));
+    const fact = cands.find(t => [...used].every(u => path(data, t, u) != null)); if (!fact) throw new Error('its fields aren’t all linked to one table');
+    const names = []; need.forEach(n => { let nm = need.some(o => o !== n && lc(o.c) === lc(n.c)) ? `${n.t} ${n.c}` : n.c; const base = nm; let k = 2; while (names.some(x => lc(x) === lc(nm))) nm = base + ' ' + k++; names.push(nm); });
+    const T = data[fact]; const rows = T.rows.map(row => need.map(n => { const v = valueVia(data, T.name, row, n.t, n.c); return v === undefined ? null : v; }));
+    const q = s => "'" + s.replace(/'/g, "''") + "'";
+    return {names, rows, rowF, colF, filters, extra: extraIx, vals: vals.map(v => v.calc != null ? {...v, calc: v.calc.replace(/\u0001(\d+)\u0001/g, (_, i) => q(names[+i]))} : v)}; }
   /* ================================================================ Manage Data Model */
   function sources(){ const out = []; for (const s of wb().sheets) for (const t of s.tables) out.push({kind: 'table', name: t.name, sheetId: s.id, table: t.name, label: `Table ${t.name} (${s.name})`}); if (typeof PQ !== 'undefined') for (const q of PQ.list()) out.push({kind: 'query', name: q.name.replace(/[^\w ]/g, '').trim() || 'Query', queryId: q.id, label: `Query ${q.name}`}); return out; }
   async function manage(tab = 'tables', note){ document.querySelectorAll('.ppm').forEach(e => e.remove()); const wrap = h('div', {class: 'ppm xpanel', role: 'dialog', 'aria-label': 'Data Model'}); document.body.append(wrap); let cur = tab;
@@ -251,5 +278,5 @@ const PP = (() => {
   };
   SRK_EXT.push(ext);
   setTimeout(() => { G.onSlicer = onSlicer; }, 0);
-  return {manage, pivotDialog, refreshAll, touched: () => { cache = null; }, slicerHTML, insertSlicer, measure: (m, data) => measure(m, {data, filters: [], row: null}), load, parse, compute, M};
+  return {manage, pivotDialog, refreshAll, touched: () => { cache = null; }, slicerHTML, insertSlicer, measure: (m, data) => measure(m, {data, filters: [], row: null}), load, parse, compute, M, flatten};
 })();

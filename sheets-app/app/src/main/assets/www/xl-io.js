@@ -93,7 +93,10 @@ const XIO = (() => {
     try { for (const d of (X.definedNames.model || [])){ if (!d.name || /^_xlnm/.test(d.name)) continue; wb.names[d.name] = (d.ranges || [])[0]; } } catch(e){}
     try { await readCharts(buf, wb); } catch(e){ console.warn('charts', e); }
     try { await readSparks(buf, wb); } catch(e){ console.warn('sparklines', e); }
-    try { await readPivots(buf, wb); } catch(e){ console.warn('pivots', e); }
+    let pinfo = [], tinfo = {}; try { pinfo = await readPivots(buf, wb); } catch(e){ console.warn('pivots', e); }
+    try { tinfo = await readTableParts(buf, wb); } catch(e){ console.warn('tables', e); }
+    try { await readSlicers(buf, wb, pinfo, tinfo); } catch(e){ console.warn('slicers', e); }
+    try { await readMeta(buf, wb); } catch(e){ console.warn('SRK settings', e); }
     if (!wb.sheets.length) wb.sheets.push(newSheet('Sheet1'));
     const act = (X.views && X.views[0] && X.views[0].activeTab) || 0; wb.active = Math.min(act, wb.sheets.length - 1);
     return wb;
@@ -141,7 +144,9 @@ const XIO = (() => {
         } } }
   }
   /* ---------------------------------------------------------------- write .xlsx */
-  async function writeXlsx(wb){
+  let lastNotes = [];
+  async function writeXlsx(wb0){
+    const plan = await exportPlan(wb0); const wb = plan.wb; lastNotes = plan.notes;
     const protects = []; const X = new ExcelJS.Workbook(); X.creator = 'SRK Sheets'; X.created = new Date(); X.calcProperties = {fullCalcOnLoad: true};
     const imgIds = {};
     for (const sh of wb.sheets){
@@ -166,19 +171,24 @@ const XIO = (() => {
       // table cells without a value still need the table look
       for (const t of sh.tables) forRange(t.range, (r, c) => { if (sh.cells[key(r, c)]) return; const tst = tableStyleAt(sh, r, c); if (tst && tst.fill) Object.assign(ws.getCell(r + 1, c + 1), styleOut({fill: tst.fill})); });
       for (const k of new Set([...Object.keys(sh.notes), ...Object.keys(sh.comments || {})])) if (!sh.cells[k]){ const [r, c] = unkey(k); const nt = noteText(sh, k); if (nt) ws.getCell(r + 1, c + 1).note = nt; }
+      for (const T of plan.tables) if (T.sh === sh && T.t.header !== false) T.cols.forEach((n, i) => { const cell = ws.getCell(T.t.range.r1 + 1, T.t.range.c1 + i + 1); if (cell.value !== n) cell.value = n; });
       for (const m of sh.merges) try { ws.mergeCells(m.r1 + 1, m.c1 + 1, m.r2 + 1, m.c2 + 1); } catch(e){}
       for (const d of sh.dv){ const rule = d.type === 'list' ? {type: 'list', allowBlank: true, showErrorMessage: true, formulae: [/^=/.test(d.list) ? d.list.slice(1) : `"${String(d.list).replace(/"/g, '')}"`]} : {type: d.type === 'length' ? 'textLength' : d.type, operator: ({between: 'between', gte: 'greaterThanOrEqual', lte: 'lessThanOrEqual', eq: 'equal'})[d.op || 'between'], allowBlank: true, showErrorMessage: true, formulae: d.op === 'between' ? [d.min, d.max] : [d.op === 'lte' ? d.max : d.min]};
         const g = d.range; const n = (g.r2 - g.r1 + 1) * (g.c2 - g.c1 + 1); if (ws.dataValidations && ws.dataValidations.add) ws.dataValidations.add(rangeAddr(g), rule); else if (n < 5000) forRange(g, (r, c) => { ws.getCell(r + 1, c + 1).dataValidation = rule; }); }
       for (const rule of sh.cf){ const out = cfOut(rule); if (out) try { ws.addConditionalFormatting({ref: rangeAddr(rule.range), rules: [out]}); } catch(e){} }
-      const af = sh.filter ? sh.filter.range : (sh.tables.find(t => t.filter !== false) || {}).range; if (af) ws.autoFilter = rangeAddr(af);
+      const af = sh.filter && !plan.tables.some(T => T.sh === sh && overlap(T.t.range, sh.filter.range)) ? sh.filter.range : null; if (af) ws.autoFilter = rangeAddr(af);
       for (const im of sh.images){ const src = im.src.startsWith('m:') ? wb.media[im.src.slice(2)] : im.src; if (!src) continue; let id = imgIds[src]; if (id == null){ const m = /^data:image\/(\w+);base64,(.*)$/.exec(src); if (!m) continue; id = X.addImage({base64: m[2], extension: m[1] === 'jpg' ? 'jpeg' : m[1]}); imgIds[src] = id; }
         ws.addImage(id, {tl: {col: im.c + (im.dx || 0) / (sh.colW[im.c] ?? DEF_W), row: im.r + (im.dy || 0) / (sh.rowH[im.r] ?? DEF_H)}, ext: {width: im.w, height: im.h}, editAs: 'oneCell'}); }
     }
     for (const [n, ref] of Object.entries(wb.names)){ try { X.definedNames.add(ref.replace(/^=/, ''), n); } catch(e){} }
     await Promise.all(protects); let buf = await X.xlsx.writeBuffer();
-    if (wb.sheets.some(s => s.charts.length || (s.shapes || []).length)) buf = await addCharts(buf, wb);
-    if (wb.sheets.some(s => (s.pivots || []).some(p => p.out))) try { buf = await addPivots(buf, wb); } catch(e){ console.warn('pivots', e); }
+    const step = async (name, fn) => { try { buf = await fn(buf); } catch(e){ console.warn(name, e); plan.notes.push(`Part of the file (${name}) couldn’t be saved: ${e.message}`); } };
+    if (plan.tables.length || wb.sheets.some(s => s.filter && s.filter.cols && Object.keys(s.filter.cols).length)) await step('tables', b => addTables(b, plan));
+    if (wb.sheets.some(s => s.charts.length || (s.shapes || []).length) || plan.slicers.length) buf = await addCharts(buf, wb, plan);
+    if (plan.pivots.length) await step('PivotTables', b => addPivots(b, plan));
+    if (plan.slicers.length) await step('slicers', b => addSlicers(b, plan));
     if (wb.sheets.some(s => (s.sparks || []).length)) buf = await addSparks(buf, wb);
+    await step('SRK settings', b => addMeta(b, plan));
     return buf;
   }
   function cfOut(r){
@@ -223,12 +233,12 @@ const XIO = (() => {
         for (const sm of body.matchAll(/<xm:f>([^<]+)<\/xm:f>\s*<xm:sqref>([^<]+)<\/xm:sqref>/g)){ const ref = sm[1].replace(/&apos;/g, "'").replace(/&amp;/g, '&'); const mm = /^(?:'((?:[^']|'')+)'|([^!]+))!(.+)$/.exec(ref); const g = parseRange((mm ? mm[3] : ref).replace(/\$/g, '')); const at_ = parseAddr(sm[2].trim().split(/\s+/)[0]); if (!g || !at_) continue;
           const srcName = mm ? (mm[1] || mm[2]).replace(/''/g, "'") : sh.name; out.push({id: uid(), r: at_.r, c: at_.c, src: g, sheet: srcName !== sh.name ? srcName : undefined, type, color}); } }
       if (out.length) sh.sparks = out; } }
-  async function addCharts(buf, wb){
+  async function addCharts(buf, wb, plan){ const slOf = sh => plan ? plan.slicers.filter(e => e.sh === sh) : [];
     const z = await JSZip.loadAsync(buf); const ct = await z.file('[Content_Types].xml').async('string'); let ctx = ct; let chartN = 0;
     const wbx = await z.file('xl/workbook.xml').async('string'); const wrel = await z.file('xl/_rels/workbook.xml.rels').async('string');
     const sheetPath = name => { const m = new RegExp(`<sheet [^>]*name="${xmlA(name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"[^>]*r:id="([^"]+)"`).exec(wbx); if (!m) return null; const t = new RegExp(`Id="${m[1]}"[^>]*Target="([^"]+)"|Target="([^"]+)"[^>]*Id="${m[1]}"`).exec(wrel); const tg = t[1] || t[2]; return tg.startsWith('/') ? tg.slice(1) : 'xl/' + tg.replace(/^\.\//, ''); };
     let drawN = Object.keys(z.files).filter(p => /^xl\/drawings\/drawing\d+\.xml$/.test(p)).length;
-    for (const sh of wb.sheets){ if (!sh.charts.length && !(sh.shapes || []).length) continue; const sp = sheetPath(sh.name); if (!sp) continue; const relP = sp.replace(/([^\/]+)$/, '_rels/$1.rels');
+    for (const sh of wb.sheets){ if (!sh.charts.length && !(sh.shapes || []).length && !slOf(sh).length) continue; const sp = sheetPath(sh.name); if (!sp) continue; const relP = sp.replace(/([^\/]+)$/, '_rels/$1.rels');
       let srel = z.file(relP) ? await z.file(relP).async('string') : '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>';
       let sx = await z.file(sp).async('string'); let dPath, dx, drel;
       const m = /<drawing r:id="([^"]+)"\/>/.exec(sx); if (m){ const t = new RegExp(`Id="${m[1]}"[^>]*Target="([^"]+)"|Target="([^"]+)"[^>]*Id="${m[1]}"`).exec(srel); dPath = 'xl/drawings/' + (t[1] || t[2]).split('/').pop(); dx = await z.file(dPath).async('string'); const drP = dPath.replace(/([^\/]+)$/, '_rels/$1.rels'); drel = z.file(drP) ? await z.file(drP).async('string') : null; }
@@ -242,6 +252,7 @@ const XIO = (() => {
       for (const o of sh.charts){ chartN++; const rid = 'rIdC' + chartN; z.file(`xl/charts/chart${chartN}.xml`, chartXml(sh, o)); drel = drel.replace('</Relationships>', `<Relationship Id="${rid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="../charts/chart${chartN}.xml"/></Relationships>`);
         ctx = ctx.replace('</Types>', `<Override PartName="/xl/charts/chart${chartN}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/></Types>`);
         const end = endCell(sh, o); dx = dx.replace('</xdr:wsDr>', `<xdr:twoCellAnchor editAs="oneCell"><xdr:from><xdr:col>${o.c}</xdr:col><xdr:colOff>${Math.round((o.dx || 0) * EMU)}</xdr:colOff><xdr:row>${o.r}</xdr:row><xdr:rowOff>${Math.round((o.dy || 0) * EMU)}</xdr:rowOff></xdr:from><xdr:to><xdr:col>${end.c}</xdr:col><xdr:colOff>${Math.round(end.dx * EMU)}</xdr:colOff><xdr:row>${end.r}</xdr:row><xdr:rowOff>${Math.round(end.dy * EMU)}</xdr:rowOff></xdr:to><xdr:graphicFrame macro=""><xdr:nvGraphicFramePr><xdr:cNvPr id="${1000 + chartN}" name="Chart ${chartN}"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr><xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xdr:xfrm><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart r:id="${rid}"/></a:graphicData></a:graphic></xdr:graphicFrame><xdr:clientData/></xdr:twoCellAnchor></xdr:wsDr>`); }
+      slOf(sh).forEach((e, i) => { dx = dx.replace('</xdr:wsDr>', slicerAnchor(sh, e, 2000 + i + drawN * 500) + '</xdr:wsDr>'); });
       (sh.shapes || []).forEach((o, i) => { dx = dx.replace('</xdr:wsDr>', shapeXml(sh, o, 3000 + chartN * 50 + i + drawN * 500) + '</xdr:wsDr>'); });
       z.file(sp, sx); z.file(relP, srel); z.file(dPath, dx); z.file(dPath.replace(/([^\/]+)$/, '_rels/$1.rels'), drel);
     }
@@ -317,56 +328,152 @@ const XIO = (() => {
       const pp = q(body, 'pPr')[0]; const al = pp && pp.getAttribute('algn'); if (al === 'l') o.align = 'left'; else if (al === 'r') o.align = 'right'; else if (shape === 'textbox' && al !== 'ctr') o.align = 'left'; } else o.text = '';
     if (shape === 'textbox' && !o.color) o.color = '#000000'; return o; }
 
+  /* ---------------------------------------------------------------- export plan: tables, PivotTables (incl. Data Model), slicers */
+  const REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships', MAIN = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main', X14 = 'http://schemas.microsoft.com/office/spreadsheetml/2009/9/main', X15 = 'http://schemas.microsoft.com/office/spreadsheetml/2010/11/main';
+  const EMPTY_RELS = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>';
+  const overlap = (a, b) => a.r1 <= b.r2 && a.r2 >= b.r1 && a.c1 <= b.c2 && a.c2 >= b.c1;
+  const uniq = (base, used) => { let n = base, k = 2; while (used.has(n.toLowerCase())) n = base + '_' + k++; used.add(n.toLowerCase()); return n; };
+  async function exportPlan(wb0){
+    const sheets = [...wb0.sheets]; const notes = []; const used = new Set(Object.keys(wb0.names || {}).map(n => n.toLowerCase()));
+    // real Excel tables
+    const tables = []; let tid = 0;
+    for (const sh of wb0.sheets) for (const t of sh.tables || []){ const g = t.range; if (!g || g.r2 < g.r1 || g.c2 < g.c1) continue; tid++;
+      let nm = String(t.name || 'Table').replace(/[^\w.\\]/g, '_'); if (!/^[A-Za-z_\\]/.test(nm)) nm = 'T_' + nm; if (/^[A-Za-z]{1,3}\d+$/.test(nm) || /^[rc]$/i.test(nm)) nm += '_';
+      const cols = []; for (let c = g.c1; c <= g.c2; c++){ let n = t.header !== false ? String(displayAt(sh, g.r1, c).text || '').replace(/[\r\n]+/g, ' ').trim() : ''; if (!n) n = 'Column' + (c - g.c1 + 1); const b = n; let j = 2; while (cols.some(x => x.toLowerCase() === n.toLowerCase())) n = b + j++; cols.push(n); }
+      tables.push({sh, t, id: tid, name: uniq(nm, used), cols}); }
+    // PivotTables: regular ones, then Data Model ones flattened onto hidden sheets
+    const pivots = []; const byPid = new Map(); const dmBy = new Map(); const tmp = [];
+    for (const sh of wb0.sheets) for (const p of sh.pivots || []){ if (!p.out) continue; const d = {...p, filters: p.filter ? [p.filter] : [], host: sh, slicers: new Map()}; byPid.set(p.id, d); pivots.push(d); }
+    if (typeof PP !== 'undefined' && PP.flatten) for (const sh of wb0.sheets) for (const p of sh.dmPivots || []){ if (!p.out) continue;
+      const sl = []; for (const s2 of wb0.sheets) for (const o of s2.slicers || []) if (o.target && o.target.kind === 'dm' && o.target.pid === p.id && o.field) sl.push(o);
+      let f; try { f = await PP.flatten(p, sl.map(o => o.field)); } catch(e){ notes.push(`A Data Model PivotTable on “${sh.name}” was saved as values: ${e.message}`); continue; }
+      let nm = 'SRK Model Data' + (tmp.length ? ' ' + (tmp.length + 1) : ''); while (sheets.some(s => s.name === nm)) nm += '_';
+      const ts = newSheet(nm); ts.hiddenSheet = true; f.names.forEach((n, j) => { ts.cells[key(0, j)] = {v: n}; }); f.rows.forEach((row, i) => row.forEach((v, j) => { if (v == null || v === '') return; ts.cells[key(i + 1, j)] = {v: typeof v === 'object' && !isErr(v) ? String(v) : v}; }));
+      tmp.push(ts); sheets.push(ts);
+      const d = {id: 'dm_' + p.id, dm: p, host: sh, src: {sheetId: ts.id, g: {r1: 0, c1: 0, r2: Math.max(1, f.rows.length), c2: f.names.length - 1}}, names: f.names, rows: f.rowF[0] ?? null, rows2: f.rowF[1] ?? null, cols: f.colF, vals: f.vals, show: 'val', filters: f.filters, out: p.out, slicers: new Map(), slIx: new Map(sl.map((o, k) => [o.id, f.extra[k]]))};
+      dmBy.set(p.id, d); pivots.push(d); }
+    const sheetById = id => sheets.find(s => s.id === id);
+    // cache field names + PivotTable names
+    const perSheet = new Map(); for (const d of pivots){ const n = (perSheet.get(d.host) || 0) + 1; perSheet.set(d.host, n); d.xname = 'PivotTable' + n;
+      if (!d.names){ const src = sheetById(d.src.sheetId); const g = d.src.g; d.names = []; for (let c = g.c1; c <= g.c2; c++){ let nm = src ? String(displayAt(src, g.r1, c).text || '').replace(/[\r\n]+/g, ' ').trim() : ''; if (!nm) nm = 'Column' + (c - g.c1 + 1); const base = nm; let k = 2; while (d.names.some(x => x.toLowerCase() === nm.toLowerCase())) nm = base + k++; d.names.push(nm); } } }
+    // slicers
+    const slicers = []; const snames = new Set(), cnames = new Set(used);
+    for (const sh of wb0.sheets) for (const o of sh.slicers || []){ const tg = o.target || {}; let e = null;
+      if (tg.kind === 'pivot'){ const d = byPid.get(tg.pid); if (d && o.col != null) e = {kind: 'pivot', def: d, f: o.col, source: d.names[o.col - d.src.g.c1]}; }
+      else if (tg.kind === 'dm'){ const d = dmBy.get(tg.pid); const i = d && d.slIx.get(o.id); if (d && i != null) e = {kind: 'pivot', def: d, f: i, source: d.names[i]}; }
+      else if (tg.kind === 'table'){ const tsh = wb0.sheets.find(s => s.id === tg.sheetId); const T = tables.find(x => x.sh === tsh && x.t.name === tg.table); if (T && o.col != null && T.cols[o.col] != null) e = {kind: 'table', T, col: o.col, source: T.cols[o.col]}; }
+      if (!e || e.source == null){ notes.push(`Slicer “${o.title || ''}” was left out because what it filters wasn’t saved`); continue; }
+      e.o = o; e.sh = sh; e.sel = o.sel || []; if (e.kind === 'pivot') e.def.slicers.set(e.f, e.sel);
+      let sn = String(o.title || e.source).trim() || e.source; if (snames.has(sn.toLowerCase())){ let k = 1; while (snames.has((sn + ' ' + k).toLowerCase())) k++; sn = sn + ' ' + k; } snames.add(sn.toLowerCase()); e.name = sn;
+      let cn = 'Slicer_' + e.source.replace(/[^\w]/g, '_'); e.cache = uniq(cn, cnames); slicers.push(e); }
+    return {wb: {...wb0, sheets}, sheets, tmp, tables, pivots, slicers, notes, sheetById, base: wb0}; }
+  /* small helper for editing an xlsx package */
+  async function pkg(buf){ const z = await JSZip.loadAsync(buf); const P = s => new DOMParser().parseFromString(s, 'application/xml');
+    const o = {z, ct: await z.file('[Content_Types].xml').async('string'), wbx: await z.file('xl/workbook.xml').async('string'), wrel: await z.file('xl/_rels/workbook.xml.rels').async('string'), rels: {}, files: {}};
+    const info = () => { const d = P(o.wbx); const R = P(o.wrel); const tg = {}; for (const r of R.getElementsByTagNameNS('*', 'Relationship')) tg[r.getAttribute('Id')] = r.getAttribute('Target'); const m = {}; for (const s of d.getElementsByTagNameNS('*', 'sheet')){ const rid = s.getAttributeNS(REL, 'id') || s.getAttribute('r:id'); const t = tg[rid]; if (!t) continue; m[s.getAttribute('name')] = {path: t.startsWith('/') ? t.slice(1) : 'xl/' + t.replace(/^\.\//, ''), sheetId: s.getAttribute('sheetId')}; } return m; };
+    o.sheets = info(); o.override = (part, type) => { o.ct = o.ct.replace('</Types>', `<Override PartName="/${part}" ContentType="${type}"/></Types>`); };
+    o.wbRel = (id, type, target) => { o.wrel = o.wrel.replace('</Relationships>', `<Relationship Id="${id}" Type="${type}" Target="${target}"/></Relationships>`); };
+    o.read = async p => { if (o.files[p] != null) return o.files[p]; const f = z.file(p); return o.files[p] = f ? await f.async('string') : null; };
+    o.write = (p, s) => { o.files[p] = s; };
+    o.relsOf = async p => { const rp = p.replace(/([^\/]+)$/, '_rels/$1.rels'); return (await o.read(rp)) || EMPTY_RELS; };
+    o.addRel = async (p, id, type, target) => { const rp = p.replace(/([^\/]+)$/, '_rels/$1.rels'); o.write(rp, (await o.relsOf(p)).replace('</Relationships>', `<Relationship Id="${id}" Type="${type}" Target="${target}"/></Relationships>`)); };
+    o.done = () => { for (const [p, s] of Object.entries(o.files)) if (s != null) z.file(p, s); z.file('[Content_Types].xml', o.ct); z.file('xl/workbook.xml', o.wbx); z.file('xl/_rels/workbook.xml.rels', o.wrel); return z.generateAsync({type: 'arraybuffer', compression: 'DEFLATE'}); };
+    return o; }
+  const withR = x => /xmlns:r=/.test(x.slice(0, 1200)) ? x : x.replace(/<worksheet\b/, `<worksheet xmlns:r="${REL}"`);
+  const addExt = (x, ext, root) => /<extLst>/.test(x) ? x.replace(/<\/extLst>(?![\s\S]*<\/extLst>)/, ext + '</extLst>') : x.replace(`</${root}>`, `<extLst>${ext}</extLst></${root}>`);
+  const filterCols = (f, g) => { if (!f || !f.cols) return ''; let out = ''; for (const c in f.cols){ const cr = f.cols[c]; if (!cr || !cr.values || +c < g.c1 || +c > g.c2) continue; const blank = cr.values.includes(''); out += `<filterColumn colId="${+c - g.c1}"><filters${blank ? ' blank="1"' : ''}>${cr.values.filter(v => v !== '').map(v => `<filter val="${xmlA(v)}"/>`).join('')}</filters></filterColumn>`; } return out; };
+  const TSTYLE = {blue: 2, orange: 3, grey: 4, gold: 5, sky: 6, green: 7, navy: 1, teal: 6, purple: 5, red: 3};
+  async function addTables(buf, plan){ const o = await pkg(buf);
+    for (const sh of plan.wb.sheets){ const sp = o.sheets[sh.name] && o.sheets[sh.name].path; if (!sp) continue; let sx = await o.read(sp); if (!sx) continue;
+      // values filter on a plain AutoFilter
+      if (sh.filter && sh.filter.cols && Object.keys(sh.filter.cols).length && !plan.tables.some(T => T.sh === sh && overlap(T.t.range, sh.filter.range))){ const fc = filterCols(sh.filter, sh.filter.range); if (fc) sx = sx.replace(/<autoFilter ref="([^"]+)"\s*\/>/, (m, r) => `<autoFilter ref="${r}">${fc}</autoFilter>`); }
+      const list = plan.tables.filter(T => T.sh === sh);
+      if (list.length){ sx = withR(sx); const parts = [];
+        for (const T of list){ const t = T.t, g = t.range; const hdr = t.header !== false; const dataEnd = t.total ? g.r2 - 1 : g.r2; const f = sh.filter && sh.filter.range && sh.filter.range.r1 === g.r1 && sh.filter.range.c1 >= g.c1 && sh.filter.range.c2 <= g.c2 ? sh.filter : null;
+          const af = hdr && t.filter !== false ? `<autoFilter ref="${rangeAddr({r1: g.r1, c1: g.c1, r2: Math.max(g.r1, dataEnd), c2: g.c2})}">${filterCols(f, g)}</autoFilter>` : '';
+          const xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><table xmlns="${MAIN}" id="${T.id}" name="${xmlA(T.name)}" displayName="${xmlA(T.name)}" ref="${rangeAddr(g)}"${hdr ? '' : ' headerRowCount="0"'}${t.total ? ' totalsRowCount="1"' : ' totalsRowShown="0"'}>${af}<tableColumns count="${T.cols.length}">${T.cols.map((n, i) => `<tableColumn id="${i + 1}" name="${xmlA(n)}"/>`).join('')}</tableColumns><tableStyleInfo name="TableStyleMedium${TSTYLE[t.style] || 2}" showFirstColumn="0" showLastColumn="0" showRowStripes="${t.banded === false ? 0 : 1}" showColumnStripes="0"/></table>`;
+          o.write(`xl/tables/table${T.id}.xml`, xml); o.override(`xl/tables/table${T.id}.xml`, 'application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml'); await o.addRel(sp, 'rIdTb' + T.id, REL + '/table', `../tables/table${T.id}.xml`); parts.push(`<tablePart r:id="rIdTb${T.id}"/>`); }
+        const tp = `<tableParts count="${parts.length}">${parts.join('')}</tableParts>`; sx = /<extLst>/.test(sx) ? sx.replace('<extLst>', tp + '<extLst>') : sx.replace('</worksheet>', tp + '</worksheet>'); }
+      o.write(sp, sx); }
+    return o.done(); }
+  function slicerAnchor(sh, e, id){ const o = e.o; const p = absXY(sh, o.r, o.c, o.dx, o.dy); const req = e.kind === 'table' ? 'xmlns:sle15="http://schemas.microsoft.com/office/drawing/2012/slicer" Requires="sle15"' : 'xmlns:a14="http://schemas.microsoft.com/office/drawing/2010/main" Requires="a14"';
+    return `<xdr:twoCellAnchor editAs="oneCell">${anchorXml(sh, o)}<mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><mc:Choice ${req}><xdr:graphicFrame macro=""><xdr:nvGraphicFramePr><xdr:cNvPr id="${id}" name="${xmlA(e.name)}"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr><xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xdr:xfrm><a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/drawing/2010/slicer"><sle:slicer xmlns:sle="http://schemas.microsoft.com/office/drawing/2010/slicer" name="${xmlA(e.name)}"/></a:graphicData></a:graphic></xdr:graphicFrame></mc:Choice><mc:Fallback><xdr:sp macro="" textlink=""><xdr:nvSpPr><xdr:cNvPr id="0" name=""/><xdr:cNvSpPr><a:spLocks noTextEdit="1"/></xdr:cNvSpPr></xdr:nvSpPr><xdr:spPr><a:xfrm><a:off x="${Math.round(p.x * EMU)}" y="${Math.round(p.y * EMU)}"/><a:ext cx="${Math.round(o.w * EMU)}" cy="${Math.round(o.h * EMU)}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:prstClr val="white"/></a:solidFill><a:ln w="1"><a:solidFill><a:prstClr val="green"/></a:solidFill></a:ln></xdr:spPr><xdr:txBody><a:bodyPr vertOverflow="clip" horzOverflow="clip"/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US" sz="1100"/><a:t>This shape represents a slicer. Slicers are supported in Excel 2010 or later.</a:t></a:r></a:p></xdr:txBody></xdr:sp></mc:Fallback></mc:AlternateContent><xdr:clientData/></xdr:twoCellAnchor>`; }
   /* ---------------------------------------------------------------- PivotTables (pivotCache + pivotTable parts) */
   const SUBT = {Sum: 'sum', Count: 'count', Average: 'average', Max: 'max', Min: 'min', Product: 'product', 'Count distinct': 'count'}; const SUBT_IN = {sum: 'Sum', count: 'Count', countNums: 'Count', average: 'Average', max: 'Max', min: 'Min', product: 'Product', stdDev: 'Average', stdDevp: 'Average', var: 'Average', varp: 'Average'};
   const SHOW = {pctTotal: 'percentOfTotal', pctRow: 'percentOfRow', pctCol: 'percentOfCol'}; const SHOW_IN = {percentOfTotal: 'pctTotal', percentOfRow: 'pctRow', percentOfCol: 'pctCol'};
-  async function addPivots(buf, wb){
-    const z = await JSZip.loadAsync(buf); let ctx = await z.file('[Content_Types].xml').async('string'); let wbx = await z.file('xl/workbook.xml').async('string'); let wrel = await z.file('xl/_rels/workbook.xml.rels').async('string');
-    const sheetPath = name => { const m = new RegExp(`<sheet [^>]*name="${xmlA(name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"[^>]*r:id="([^"]+)"`).exec(wbx); if (!m) return null; const t = new RegExp(`Id="${m[1]}"[^>]*Target="([^"]+)"|Target="([^"]+)"[^>]*Id="${m[1]}"`).exec(wrel); const tg = t[1] || t[2]; return tg.startsWith('/') ? tg.slice(1) : 'xl/' + tg.replace(/^\.\//, ''); };
-    const REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships', MAIN = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'; const emptyRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>';
-    let n = 0; const caches = [];
-    for (const sh of wb.sheets){ const list = (sh.pivots || []).filter(p => p.out); if (!list.length) continue; const sp = sheetPath(sh.name); if (!sp) continue; const relP = sp.replace(/([^\/]+)$/, '_rels/$1.rels'); let srel = z.file(relP) ? await z.file(relP).async('string') : emptyRels;
-      for (const def of list){ const src = wb.sheets.find(s => s.id === def.src.sheetId); if (!src) continue; const g = def.src.g; n++;
-        const nf = g.c2 - g.c1 + 1; const names = []; for (let c = g.c1; c <= g.c2; c++){ let nm = String(displayAt(src, g.r1, c).text || 'Column' + (c - g.c1 + 1)).trim() || 'Column' + (c - g.c1 + 1); let base = nm, k = 2; while (names.some(x => x.toLowerCase() === nm.toLowerCase())) nm = base + k++; names.push(nm); }
-        const fi = c => c == null ? null : c - g.c1; const rowsF = [def.rows, def.rows2].filter(c => c != null).map(fi), colF = def.cols != null ? fi(def.cols) : null; const filtF = def.filter ? fi(def.filter.f) : null; const axis = new Set([...rowsF, ...(colF != null ? [colF] : [])]);
-        const usePage = filtF != null && !axis.has(filtF) && def.out.r1 >= 2; const itemF = new Set([...axis, ...(usePage ? [filtF] : [])]);
-        // shared items for axis/page fields
-        const shared = {}; for (const f of itemF){ const c = g.c1 + f; const seen = new Map(); let blank = false, allNum = true; for (let r = g.r1 + 1; r <= g.r2; r++){ const v = Calc.get(src, r, c); if (v == null || v === ''){ blank = true; continue; } if (typeof v !== 'number') allNum = false; const t = displayAt(src, r, c).text; if (!seen.has(t)) seen.set(t, v); }
-          const items = [...seen.entries()].map(([t, v]) => ({t, v})); if (blank) items.push({blank: true, t: '(blank)'}); shared[f] = {items, allNum, blank}; }
-        const sharedXml = f => { const S = shared[f]; if (!S) return '<sharedItems/>'; const vals = S.items.filter(x => !x.blank); if (S.allNum && vals.length){ const nums = vals.map(x => x.v); const int = nums.every(Number.isInteger); return `<sharedItems${S.blank ? ' containsBlank="1"' : ''} containsSemiMixedTypes="0" containsString="0" containsNumber="1"${int ? ' containsInteger="1"' : ''} minValue="${Math.min(...nums)}" maxValue="${Math.max(...nums)}" count="${S.items.length}">${S.items.map(x => x.blank ? '<m/>' : `<n v="${x.v}"/>`).join('')}</sharedItems>`; }
-          return `<sharedItems${S.blank ? ' containsBlank="1"' : ''} count="${S.items.length}">${S.items.map(x => x.blank ? '<m/>' : `<s v="${xmlA(x.t)}"/>`).join('')}</sharedItems>`; };
-        const cache = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><pivotCacheDefinition xmlns="${MAIN}" xmlns:r="${REL}" refreshOnLoad="1" saveData="0" createdVersion="6" refreshedVersion="6" minRefreshableVersion="3" recordCount="0"><cacheSource type="worksheet"><worksheetSource ref="${rangeAddr(g)}" sheet="${xmlA(src.name)}"/></cacheSource><cacheFields count="${nf}">${names.map((nm, i) => `<cacheField name="${xmlA(nm)}" numFmtId="0">${sharedXml(i)}</cacheField>`).join('')}</cacheFields></pivotCacheDefinition>`;
-        z.file(`xl/pivotCache/pivotCacheDefinition${n}.xml`, cache); caches.push(n);
-        wrel = wrel.replace('</Relationships>', `<Relationship Id="rIdPC${n}" Type="${REL}/pivotCacheDefinition" Target="pivotCache/pivotCacheDefinition${n}.xml"/></Relationships>`);
-        ctx = ctx.replace('</Types>', `<Override PartName="/xl/pivotCache/pivotCacheDefinition${n}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.pivotCacheDefinition+xml"/><Override PartName="/xl/pivotTables/pivotTable${n}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.pivotTable+xml"/></Types>`);
-        // data fields with unique captions
-        const dnames = []; const dfs = def.vals.map(v => { const f = fi(v.f); let nm = `${v.agg === 'Count distinct' ? 'Count' : v.agg} of ${names[f]}`; let base = nm, k = 2; while (dnames.includes(nm) || names.includes(nm)) nm = base + ' ' + k++; dnames.push(nm); return {f, nm, sub: SUBT[v.agg] || 'sum'}; });
-        const dataSet = new Set(dfs.map(d => d.f)); const hidden = new Set(def.filter ? def.filter.vals : []);
-        const pf = names.map((_, i) => { const at = rowsF.includes(i) ? ' axis="axisRow"' : i === colF ? ' axis="axisCol"' : usePage && i === filtF ? ' axis="axisPage" multipleItemSelectionAllowed="1"' : ''; const df = dataSet.has(i) ? ' dataField="1"' : '';
-          if (!itemF.has(i)) return `<pivotField${df} showAll="0"/>`; const S = shared[i]; const filt = def.filter && i === filtF; return `<pivotField${at}${df} showAll="0"><items count="${S.items.length + 1}">${S.items.map((x, j) => `<item x="${j}"${filt && !hidden.has(x.blank ? '' : x.t) ? ' h="1"' : ''}/>`).join('')}<item t="default"/></items></pivotField>`; }).join('');
-        const colFields = [...(colF != null ? [colF] : []), ...(dfs.length > 1 ? [-2] : [])]; const hasCols = colFields.length > 0;
-        const ptn = `PivotTable${(sh.pivots || []).indexOf(def) + 1}`; const show = SHOW[def.show];
-        const pt = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><pivotTableDefinition xmlns="${MAIN}" name="${ptn}" cacheId="${n}" applyNumberFormats="0" applyBorderFormats="0" applyFontFormats="0" applyPatternFormats="0" applyAlignmentFormats="0" applyWidthHeightFormats="1" dataCaption="Values" updatedVersion="6" minRefreshableVersion="3" useAutoFormatting="1" itemPrintTitles="1" createdVersion="6" indent="0" outline="1" outlineData="1" multipleFieldFilters="0">`
-          + `<location ref="${rangeAddr(def.out)}" firstHeaderRow="1" firstDataRow="${hasCols ? 2 : 1}" firstDataCol="1"${usePage ? ' rowPageCount="1" colPageCount="1"' : ''}/>`
-          + `<pivotFields count="${nf}">${pf}</pivotFields>` + (rowsF.length ? `<rowFields count="${rowsF.length}">${rowsF.map(f => `<field x="${f}"/>`).join('')}</rowFields>` : '')
-          + (hasCols ? `<colFields count="${colFields.length}">${colFields.map(f => `<field x="${f}"/>`).join('')}</colFields>` : '')
-          + (usePage ? `<pageFields count="1"><pageField fld="${filtF}" hier="-1"/></pageFields>` : '')
-          + `<dataFields count="${dfs.length}">${dfs.map(d => `<dataField name="${xmlA(d.nm)}" fld="${d.f}" subtotal="${d.sub}" baseField="0" baseItem="0"${show ? ` showDataAs="${show}" numFmtId="10"` : ''}/>`).join('')}</dataFields>`
-          + `<pivotTableStyleInfo name="PivotStyleLight16" showRowHeaders="1" showColHeaders="1" showRowStripes="0" showColStripes="0" showLastColumn="1"/></pivotTableDefinition>`;
-        z.file(`xl/pivotTables/pivotTable${n}.xml`, pt); z.file(`xl/pivotTables/_rels/pivotTable${n}.xml.rels`, emptyRels.replace('</Relationships>', `<Relationship Id="rId1" Type="${REL}/pivotCacheDefinition" Target="../pivotCache/pivotCacheDefinition${n}.xml"/></Relationships>`));
-        srel = srel.replace('</Relationships>', `<Relationship Id="rIdPT${n}" Type="${REL}/pivotTable" Target="../pivotTables/pivotTable${n}.xml"/></Relationships>`); }
-      z.file(relP, srel); }
+  async function addPivots(buf, plan){ const o = await pkg(buf); let n = 0; const caches = [];
+    for (const def of plan.pivots){ const sh = def.host; const sp = o.sheets[sh.name] && o.sheets[sh.name].path; const src = plan.sheetById(def.src.sheetId); if (!sp || !src) continue; const g = def.src.g; n++; def.cacheN = n; def.tabId = o.sheets[sh.name].sheetId;
+      const names = def.names, nf = names.length; const fi = c => c == null ? null : c - g.c1;
+      const rowsF = [def.rows, def.rows2].filter(c => c != null).map(fi), colF = def.cols != null ? fi(def.cols) : null; const axis = new Set([...rowsF, ...(colF != null ? [colF] : [])]);
+      const slF = new Map([...def.slicers].map(([c, sel]) => [fi(c), sel])); const keep = new Map();
+      for (const f of def.filters || []) if (f.vals) keep.set(fi(f.f), new Set(f.vals)); for (const [f, sel] of slF) if (sel && sel.length) keep.set(f, new Set(sel));
+      const pageCand = [...keep.keys()].filter(f => !axis.has(f)); const pageOnly = (def.filters || []).map(f => fi(f.f)).filter(f => !axis.has(f) && !slF.has(f)); const page = def.out.r1 >= pageCand.length + 1 ? pageCand : [];
+      if (pageOnly.length && !page.length) plan.notes.push(`A PivotTable filter on “${sh.name}” was left out in Excel because the PivotTable starts in the top row (move it down two rows to keep it)`);
+      const itemF = new Set([...axis, ...page, ...slF.keys()]);
+      const shared = {}; for (const f of itemF){ const c = g.c1 + f; const seen = new Map(); let blank = false, allNum = true; for (let r = g.r1 + 1; r <= g.r2; r++){ const v = Calc.get(src, r, c); if (v == null || v === ''){ blank = true; continue; } if (typeof v !== 'number') allNum = false; const t = displayAt(src, r, c).text; if (!seen.has(t)) seen.set(t, v); }
+        const items = [...seen.entries()].map(([t, v]) => ({t, v})); if (blank) items.push({blank: true, t: ''}); shared[f] = {items, allNum, blank}; }
+      def.shared = shared;
+      const sharedXml = f => { const S = shared[f]; if (!S) return '<sharedItems/>'; const vals = S.items.filter(x => !x.blank); if (S.allNum && vals.length){ const nums = vals.map(x => x.v); const int = nums.every(Number.isInteger); return `<sharedItems${S.blank ? ' containsBlank="1"' : ''} containsSemiMixedTypes="0" containsString="0" containsNumber="1"${int ? ' containsInteger="1"' : ''} minValue="${Math.min(...nums)}" maxValue="${Math.max(...nums)}" count="${S.items.length}">${S.items.map(x => x.blank ? '<m/>' : `<n v="${x.v}"/>`).join('')}</sharedItems>`; }
+        return `<sharedItems${S.blank ? ' containsBlank="1"' : ''} count="${S.items.length}">${S.items.map(x => x.blank ? '<m/>' : `<s v="${xmlA(x.t)}"/>`).join('')}</sharedItems>`; };
+      const calcs = def.vals.filter(v => v.calc != null); const slicerExt = slF.size ? `<extLst><ext uri="{725AE2AE-9491-48be-B2B4-4EB974FC3084}" xmlns:x14="${X14}"><x14:pivotCacheDefinition pivotCacheId="${n}"/></ext></extLst>` : '';
+      const cache = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><pivotCacheDefinition xmlns="${MAIN}" xmlns:r="${REL}" refreshOnLoad="1" saveData="0" createdVersion="6" refreshedVersion="6" minRefreshableVersion="3" recordCount="0"><cacheSource type="worksheet"><worksheetSource ref="${rangeAddr(g)}" sheet="${xmlA(src.name)}"/></cacheSource><cacheFields count="${nf + calcs.length}">${names.map((nm, i) => `<cacheField name="${xmlA(nm)}" numFmtId="0">${sharedXml(i)}</cacheField>`).join('')}${calcs.map(v => `<cacheField name="${xmlA(v.name)}" numFmtId="0" formula="${xmlA(v.calc)}" databaseField="0"/>`).join('')}</cacheFields>${slicerExt}</pivotCacheDefinition>`;
+      o.write(`xl/pivotCache/pivotCacheDefinition${n}.xml`, cache); caches.push(n); o.wbRel('rIdPC' + n, REL + '/pivotCacheDefinition', `pivotCache/pivotCacheDefinition${n}.xml`);
+      o.override(`xl/pivotCache/pivotCacheDefinition${n}.xml`, 'application/vnd.openxmlformats-officedocument.spreadsheetml.pivotCacheDefinition+xml'); o.override(`xl/pivotTables/pivotTable${n}.xml`, 'application/vnd.openxmlformats-officedocument.spreadsheetml.pivotTable+xml');
+      const dnames = []; let ci = 0; const dfs = def.vals.map(v => { const calc = v.calc != null; const f = calc ? nf + ci++ : fi(v.f); let nm = calc ? v.name + ' ' : v.name || `${v.agg === 'Count distinct' ? 'Count' : v.agg} of ${names[f]}`; const base = nm; let k = 2; while (dnames.includes(nm) || names.includes(nm) || calcs.some(c => c.name === nm)) nm = base + ' ' + k++; dnames.push(nm); return {f, nm, sub: calc ? 'sum' : SUBT[v.agg] || 'sum'}; });
+      const dataSet = new Set(dfs.map(d => d.f));
+      const pf = names.map((_, i) => { const at = rowsF.includes(i) ? ' axis="axisRow"' : i === colF ? ' axis="axisCol"' : page.includes(i) ? ' axis="axisPage" multipleItemSelectionAllowed="1"' : ''; const df = dataSet.has(i) ? ' dataField="1"' : '';
+        if (!itemF.has(i)) return `<pivotField${df} showAll="0"/>`; const S = shared[i]; const kp = keep.get(i); return `<pivotField${at}${df} showAll="0"><items count="${S.items.length + 1}">${S.items.map((x, j) => `<item x="${j}"${kp && !kp.has(x.t) ? ' h="1"' : ''}/>`).join('')}<item t="default"/></items></pivotField>`; }).join('') + calcs.map(() => '<pivotField dataField="1" dragToRow="0" dragToCol="0" dragToPage="0" showAll="0" defaultSubtotal="0"/>').join('');
+      const colFields = [...(colF != null ? [colF] : []), ...(dfs.length > 1 ? [-2] : [])]; const hasCols = colFields.length > 0; const show = SHOW[def.show];
+      const pt = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><pivotTableDefinition xmlns="${MAIN}" name="${def.xname}" cacheId="${n}" applyNumberFormats="0" applyBorderFormats="0" applyFontFormats="0" applyPatternFormats="0" applyAlignmentFormats="0" applyWidthHeightFormats="1" dataCaption="Values" updatedVersion="6" minRefreshableVersion="3" useAutoFormatting="1" itemPrintTitles="1" createdVersion="6" indent="0" outline="1" outlineData="1" multipleFieldFilters="0">`
+        + `<location ref="${rangeAddr(def.out)}" firstHeaderRow="1" firstDataRow="${hasCols ? 2 : 1}" firstDataCol="1"${page.length ? ` rowPageCount="${page.length}" colPageCount="1"` : ''}/>`
+        + `<pivotFields count="${nf + calcs.length}">${pf}</pivotFields>` + (rowsF.length ? `<rowFields count="${rowsF.length}">${rowsF.map(f => `<field x="${f}"/>`).join('')}</rowFields>` : '')
+        + (hasCols ? `<colFields count="${colFields.length}">${colFields.map(f => `<field x="${f}"/>`).join('')}</colFields>` : '')
+        + (page.length ? `<pageFields count="${page.length}">${page.map(f => `<pageField fld="${f}" hier="-1"/>`).join('')}</pageFields>` : '')
+        + `<dataFields count="${dfs.length}">${dfs.map(d => `<dataField name="${xmlA(d.nm)}" fld="${d.f}" subtotal="${d.sub}" baseField="0" baseItem="0"${show ? ` showDataAs="${show}" numFmtId="10"` : ''}/>`).join('')}</dataFields>`
+        + `<pivotTableStyleInfo name="PivotStyleLight16" showRowHeaders="1" showColHeaders="1" showRowStripes="0" showColStripes="0" showLastColumn="1"/></pivotTableDefinition>`;
+      o.write(`xl/pivotTables/pivotTable${n}.xml`, pt); o.write(`xl/pivotTables/_rels/pivotTable${n}.xml.rels`, EMPTY_RELS.replace('</Relationships>', `<Relationship Id="rId1" Type="${REL}/pivotCacheDefinition" Target="../pivotCache/pivotCacheDefinition${n}.xml"/></Relationships>`));
+      await o.addRel(sp, 'rIdPT' + n, REL + '/pivotTable', `../pivotTables/pivotTable${n}.xml`); }
     if (!caches.length) return buf;
     const pc = `<pivotCaches>${caches.map(i => `<pivotCache cacheId="${i}" r:id="rIdPC${i}"/>`).join('')}</pivotCaches>`;
-    if (!/xmlns:r=/.test(wbx.slice(0, 800))) wbx = wbx.replace('<workbook ', `<workbook xmlns:r="${REL}" `);
-    const m = /<(oleSize|customWorkbookViews|smartTagPr|smartTagTypes|webPublishing|fileRecoveryPr|webPublishObjects|extLst)\b|<\/workbook>/.exec(wbx); wbx = wbx.slice(0, m.index) + pc + wbx.slice(m.index);
-    z.file('xl/workbook.xml', wbx); z.file('xl/_rels/workbook.xml.rels', wrel); z.file('[Content_Types].xml', ctx);
-    return z.generateAsync({type: 'arraybuffer', compression: 'DEFLATE'}); }
+    if (!/xmlns:r=/.test(o.wbx.slice(0, 800))) o.wbx = o.wbx.replace('<workbook ', `<workbook xmlns:r="${REL}" `);
+    const m = /<(oleSize|customWorkbookViews|smartTagPr|smartTagTypes|webPublishing|fileRecoveryPr|webPublishObjects|extLst)\b|<\/workbook>/.exec(o.wbx); o.wbx = o.wbx.slice(0, m.index) + pc + o.wbx.slice(m.index);
+    return o.done(); }
+  /* ---------------------------------------------------------------- slicers (Excel 2010+ pivot slicers, Excel 2013+ table slicers) */
+  async function addSlicers(buf, plan){ const list = plan.slicers.filter(e => e.kind === 'table' || e.def.cacheN); if (!list.length) return buf; const o = await pkg(buf); const NS = `xmlns="${X14}" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:x="${MAIN}"`;
+    const piv = [], tab = []; list.forEach((e, i) => { const k = i + 1; e.k = k; let xml;
+      if (e.kind === 'pivot'){ const S = e.def.shared[e.f - e.def.src.g.c1]; const sel = new Set(e.sel || []); const items = S ? S.items : []; xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><slicerCacheDefinition ${NS} mc:Ignorable="x" name="${xmlA(e.cache)}" sourceName="${xmlA(e.source)}"><pivotTables><pivotTable tabId="${e.def.tabId}" name="${e.def.xname}"/></pivotTables><data><tabular pivotCacheId="${e.def.cacheN}"><items count="${items.length}">${items.map((x, j) => `<i x="${j}"${!sel.size || sel.has(x.t) ? ' s="1"' : ''}/>`).join('')}</items></tabular></data></slicerCacheDefinition>`; piv.push(k); }
+      else { xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><slicerCacheDefinition ${NS} mc:Ignorable="x x15" xmlns:x15="${X15}" name="${xmlA(e.cache)}" sourceName="${xmlA(e.source)}"><extLst><x:ext uri="{2F2917AC-EB37-4324-AD4E-5DD8C200BD13}" xmlns:x15="${X15}"><x15:tableSlicerCache tableId="${e.T.id}" column="${e.col + 1}"/></x:ext></extLst></slicerCacheDefinition>`; tab.push(k); }
+      o.write(`xl/slicerCaches/slicerCache${k}.xml`, xml); o.override(`xl/slicerCaches/slicerCache${k}.xml`, 'application/vnd.ms-excel.slicerCache+xml'); o.wbRel('rIdSC' + k, 'http://schemas.microsoft.com/office/2007/relationships/slicerCache', `slicerCaches/slicerCache${k}.xml`); });
+    // defined names Slicer_x = #N/A
+    const dn = list.map(e => `<definedName name="${xmlA(e.cache)}">#N/A</definedName>`).join(''); o.wbx = /<definedNames>/.test(o.wbx) ? o.wbx.replace('</definedNames>', dn + '</definedNames>') : /<definedNames\/>/.test(o.wbx) ? o.wbx.replace('<definedNames/>', `<definedNames>${dn}</definedNames>`) : o.wbx.replace('</sheets>', `</sheets><definedNames>${dn}</definedNames>`);
+    if (!/xmlns:r=/.test(o.wbx.slice(0, 800))) o.wbx = o.wbx.replace('<workbook ', `<workbook xmlns:r="${REL}" `);
+    if (piv.length) o.wbx = addExt(o.wbx, `<ext uri="{BBE1A952-AA13-448e-AADC-164F8A28A991}" xmlns:x14="${X14}"><x14:slicerCaches>${piv.map(k => `<x14:slicerCache r:id="rIdSC${k}"/>`).join('')}</x14:slicerCaches></ext>`, 'workbook');
+    if (tab.length) o.wbx = addExt(o.wbx, `<ext uri="{46BE6895-7355-4a93-B00E-2C351335B9C9}" xmlns:x15="${X15}"><x15:slicerCaches xmlns:x14="${X14}">${tab.map(k => `<x14:slicerCache r:id="rIdSC${k}"/>`).join('')}</x15:slicerCaches></ext>`, 'workbook');
+    // slicer parts per sheet
+    let partN = 0; for (const sh of plan.wb.sheets){ const mine = list.filter(e => e.sh === sh); if (!mine.length) continue; const sp = o.sheets[sh.name] && o.sheets[sh.name].path; if (!sp) continue; let sx = withR(await o.read(sp));
+      for (const kind of ['pivot', 'table']){ const es = mine.filter(e => e.kind === kind); if (!es.length) continue; partN++;
+        o.write(`xl/slicers/slicer${partN}.xml`, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><slicers ${NS} mc:Ignorable="x">${es.map(e => `<slicer name="${xmlA(e.name)}" cache="${xmlA(e.cache)}" caption="${xmlA(e.o.title || e.source)}" rowHeight="241300"/>`).join('')}</slicers>`);
+        o.override(`xl/slicers/slicer${partN}.xml`, 'application/vnd.ms-excel.slicer+xml'); await o.addRel(sp, 'rIdSl' + partN, 'http://schemas.microsoft.com/office/2007/relationships/slicer', `../slicers/slicer${partN}.xml`);
+        sx = addExt(sx, kind === 'pivot' ? `<ext uri="{A8765BA9-456A-4dab-B4F3-ACF838C121DE}" xmlns:x14="${X14}"><x14:slicerList><x14:slicer r:id="rIdSl${partN}"/></x14:slicerList></ext>` : `<ext uri="{3A4CF648-6AED-40f4-86FF-DC5316D8AED3}" xmlns:x15="${X15}"><x14:slicerList xmlns:x14="${X14}"><x14:slicer r:id="rIdSl${partN}"/></x14:slicerList></ext>`, 'worksheet'); }
+      o.write(sp, sx); }
+    return o.done(); }
+  /* ---------------------------------------------------------------- SRK settings part (Data Model, queries, slicers, Data Model PivotTables) */
+  async function addMeta(buf, plan){ const wb = plan.base; const nameOf = id => { const s = wb.sheets.find(x => x.id === id); return s ? '§' + s.name : id; };
+    const meta = {v: 1, model: wb.model || null, queries: wb.queries || null, tmp: plan.tmp.map(s => s.name), sheets: {}};
+    for (const sh of wb.sheets){ const m = {}; if ((sh.dmPivots || []).length) m.dmPivots = sh.dmPivots; if ((sh.slicers || []).length) m.slicers = sh.slicers; if ((sh.pivots || []).length) m.pivots = sh.pivots; if ((sh.tables || []).length) m.tables = sh.tables.map(t => ({name: t.name, style: t.style, banded: t.banded, filter: t.filter, r: t.range.r1, c: t.range.c1})); if (Object.keys(m).length) meta.sheets[sh.name] = m; }
+    if (!meta.model && !meta.queries && !Object.keys(meta.sheets).length) return buf;
+    let json; try { json = JSON.stringify(meta, (k, v) => k === 'sheetId' ? nameOf(v) : v); } catch(e){ return buf; }
+    const b64 = btoa(unescape(encodeURIComponent(json))); const o = await pkg(buf); let n = 1; while (o.z.file(`customXml/item${n}.xml`)) n++;
+    o.write(`customXml/item${n}.xml`, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><srk xmlns="urn:srk-sheets:meta" v="1">${b64}</srk>`);
+    o.write(`customXml/itemProps${n}.xml`, `<?xml version="1.0" encoding="UTF-8" standalone="no"?><ds:datastoreItem ds:itemID="{5A3C1E2B-7D4F-4B8A-9C6E-${String(Date.now()).slice(-12).padStart(12, '0')}}" xmlns:ds="http://schemas.openxmlformats.org/officeDocument/2006/customXml"><ds:schemaRefs/></ds:datastoreItem>`);
+    o.write(`customXml/_rels/item${n}.xml.rels`, EMPTY_RELS.replace('</Relationships>', `<Relationship Id="rId1" Type="${REL}/customXmlProps" Target="itemProps${n}.xml"/></Relationships>`));
+    o.override(`customXml/itemProps${n}.xml`, 'application/vnd.openxmlformats-officedocument.customXmlProperties+xml'); if (!/Extension="xml"/i.test(o.ct)) o.ct = o.ct.replace(/<Default /, '<Default Extension="xml" ContentType="application/xml"/><Default ');
+    o.wbRel('rIdSrkMeta', REL + '/customXml', `../customXml/item${n}.xml`); return o.done(); }
   async function readPivots(buf, wb){
     const z = await JSZip.loadAsync(buf); const P = s => new DOMParser().parseFromString(s, 'application/xml'); const txt = async p => { const f = z.file(p); return f ? f.async('string') : null; };
     const rels = async p => { const s = await txt(p.replace(/([^\/]+)$/, '_rels/$1.rels')); const m = {}; if (s) for (const r of P(s).getElementsByTagNameNS('*', 'Relationship')) m[r.getAttribute('Id')] = {t: r.getAttribute('Target'), type: r.getAttribute('Type')}; return m; };
     const join = (base, t) => { if (t.startsWith('/')) return t.slice(1); const p = base.split('/'); p.pop(); for (const s of t.split('/')){ if (s === '..') p.pop(); else if (s !== '.') p.push(s); } return p.join('/'); };
-    if (!Object.keys(z.files).some(f => /^xl\/pivotTables\//.test(f))) return;
+    const info = []; if (!Object.keys(z.files).some(f => /^xl\/pivotTables\//.test(f))) return info;
     const wbx = P(await txt('xl/workbook.xml')); const wrels = await rels('xl/workbook.xml'); const RNS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'; const q = (el, n) => el ? [...el.getElementsByTagNameNS('*', n)] : [];
     for (const s of q(wbx, 'sheet')){ const sh = wb.sheets.find(x => x.name === s.getAttribute('name')); if (!sh) continue; const rid = s.getAttributeNS(RNS, 'id') || s.getAttribute('r:id'); if (!wrels[rid]) continue; const path = join('xl/workbook.xml', wrels[rid].t); const srels = await rels(path);
       for (const r of Object.values(srels)){ if (!/\/pivotTable$/.test(r.type)) continue; try { const pp = join(path, r.t); const T = P(await txt(pp)); const prels = await rels(pp); const cr = Object.values(prels).find(x => /pivotCacheDefinition$/.test(x.type)); if (!cr) continue; const C = P(await txt(join(pp, cr.t)));
@@ -385,9 +492,54 @@ const XIO = (() => {
         const ff = pageFld ? +pageFld.getAttribute('fld') : fWithHidden; if (ff >= 0 && fx(ff) != null){ const items = q(pfs[ff], 'item').filter(i => i.getAttribute('x') != null); let keep = items.filter(i => i.getAttribute('h') !== '1').map(i => itemText(ff, +i.getAttribute('x'))).filter(v => v != null);
           if (pageFld && pageFld.getAttribute('item') != null && !items.some(i => i.getAttribute('h') === '1')){ const v = itemText(ff, +pageFld.getAttribute('item')); keep = v != null ? [v] : keep; }
           if (items.length && keep.length < items.length) filter = {f: fx(ff), vals: keep}; }
-        sh.pivots = sh.pivots || []; sh.pivots.push({id: uid(), src: {sheetId: srcSheet.id, g}, rows, rows2, cols, vals: vals.map(v => ({f: v.f, agg: v.agg})), show: vals[0].show || 'val', filter, at: {r: out.r1, c: out.c1}, out, fromFile: true});
+        sh.pivots = sh.pivots || []; const pdef = {id: uid(), src: {sheetId: srcSheet.id, g}, rows, rows2, cols, vals: vals.map(v => ({f: v.f, agg: v.agg})), show: vals[0].show || 'val', filter, at: {r: out.r1, c: out.c1}, out, fromFile: true}; sh.pivots.push(pdef); info.push({p: pdef, sh, name: q(T, 'pivotTableDefinition')[0] ? q(T, 'pivotTableDefinition')[0].getAttribute('name') : '', names: cf.map(x => x.getAttribute('name')), cache: C, src: srcSheet, g});
       } catch(e){ console.warn('pivot', e); } } }
-  }
+    return info; }
+  /* ---------------------------------------------------------------- read: table parts (ids + filters), slicers, SRK settings */
+  async function zread(buf){ const z = await JSZip.loadAsync(buf); const P = s => new DOMParser().parseFromString(s, 'application/xml'); const txt = async p => { const f = z.file(p); return f ? f.async('string') : null; };
+    const rels = async p => { const s = await txt(p.replace(/([^\/]+)$/, '_rels/$1.rels')); const m = {}; if (s) for (const r of P(s).getElementsByTagNameNS('*', 'Relationship')) m[r.getAttribute('Id')] = {t: r.getAttribute('Target'), type: r.getAttribute('Type')}; return m; };
+    const join = (base, t) => { if (t.startsWith('/')) return t.slice(1); const p = base.split('/'); p.pop(); for (const s of t.split('/')){ if (s === '..') p.pop(); else if (s !== '.') p.push(s); } return p.join('/'); };
+    const q = (el, n) => el ? [...el.getElementsByTagNameNS('*', n)] : []; const wbx = P(await txt('xl/workbook.xml')); const wrels = await rels('xl/workbook.xml');
+    const sheets = q(wbx, 'sheet').map(s => { const rid = s.getAttributeNS(REL, 'id') || s.getAttribute('r:id'); return {name: s.getAttribute('name'), sheetId: s.getAttribute('sheetId'), path: wrels[rid] ? join('xl/workbook.xml', wrels[rid].t) : null}; });
+    return {z, P, txt, rels, join, q, wbx, wrels, sheets}; }
+  const readFilterCols = (af, g, q) => { const cols = {}; for (const fc of q(af, 'filterColumn')){ const fs = q(fc, 'filters')[0]; if (!fs) continue; const vals = q(fs, 'filter').map(f => f.getAttribute('val')); if (fs.getAttribute('blank') === '1') vals.push(''); cols[g.c1 + +fc.getAttribute('colId')] = {values: vals}; } return cols; };
+  async function readTableParts(buf, wb){ const Z = await zread(buf); const byId = {};
+    for (const S of Z.sheets){ const sh = wb.sheets.find(x => x.name === S.name); if (!sh || !S.path) continue; const sx = await Z.txt(S.path); const srels = await Z.rels(S.path);
+      if (sx && /<autoFilter[^>]*>\s*<filterColumn/.test(sx) && sh.filter){ const D = Z.P(sx); const af = [...D.documentElement.children].find(e => e.localName === 'autoFilter'); if (af){ const cols = readFilterCols(af, sh.filter.range, Z.q); if (Object.keys(cols).length) sh.filter.cols = cols; } }
+      for (const r of Object.values(srels)){ if (!/\/table$/.test(r.type)) continue; const T = Z.P(await Z.txt(Z.join(S.path, r.t)) || '<x/>').documentElement; if (T.localName !== 'table') continue; const nm = T.getAttribute('displayName') || T.getAttribute('name'); const g = parseRange(T.getAttribute('ref') || ''); const t = sh.tables.find(x => x.name === nm) || (g && sh.tables.find(x => x.range.r1 === g.r1 && x.range.c1 === g.c1)); if (!t) continue;
+        byId[T.getAttribute('id')] = {sh, t}; const af = Z.q(T, 'autoFilter')[0]; if (!af) t.filter = false; else { const cols = readFilterCols(af, t.range, Z.q); if (Object.keys(cols).length || !sh.filter) sh.filter = {range: parseRange(af.getAttribute('ref')) || {...t.range}, cols}; }
+        const si = Z.q(T, 'tableStyleInfo')[0]; if (si && si.getAttribute('showRowStripes') === '0') t.banded = false; } }
+    return byId; }
+  async function readSlicers(buf, wb, pinfo, tinfo){ const Z = await zread(buf); const caches = {};
+    for (const r of Object.values(Z.wrels)){ if (!/\/slicerCache$/.test(r.type)) continue; const C = Z.P(await Z.txt(Z.join('xl/workbook.xml', r.t)) || '<x/>').documentElement; if (C.localName !== 'slicerCacheDefinition') continue; caches[C.getAttribute('name')] = C; }
+    if (!Object.keys(caches).length) return;
+    for (const S of Z.sheets){ const sh = wb.sheets.find(x => x.name === S.name); if (!sh || !S.path) continue; const srels = await Z.rels(S.path); const defs = {};
+      for (const r of Object.values(srels)) if (/\/slicer$/.test(r.type)){ const D = Z.P(await Z.txt(Z.join(S.path, r.t)) || '<x/>'); for (const s of Z.q(D, 'slicer')) defs[s.getAttribute('name')] = s; }
+      if (!Object.keys(defs).length) continue; const pos = {};
+      for (const r of Object.values(srels)) if (/\/drawing$/.test(r.type)){ const D = Z.P(await Z.txt(Z.join(S.path, r.t)) || '<x/>'); for (const anc of [...D.documentElement.children]){ const sl = Z.q(anc, 'slicer').find(e => e.getAttribute('name')); if (sl){ const at = anchorIn(anc, sh); if (at) pos[sl.getAttribute('name')] = at; } } }
+      for (const [name, s] of Object.entries(defs)){ const C = caches[s.getAttribute('cache')]; if (!C) continue; const source = C.getAttribute('sourceName'); let o = null;
+        const pt = Z.q(C, 'pivotTable')[0]; const ts = Z.q(C, 'tableSlicerCache')[0];
+        if (pt){ const host = Z.sheets.find(x => x.sheetId === pt.getAttribute('tabId')); const I = pinfo.find(x => x.sh.name === (host && host.name) && x.name === pt.getAttribute('name')); if (!I) continue; const fx = I.names.indexOf(source); if (fx < 0) continue;
+          const sel = []; const items = Z.q(C, 'i'); const si = Z.q(Z.q(I.cache, 'cacheField')[fx], 'sharedItems')[0]; const kids = si ? [...si.children] : [];
+          const txtOf = it => { if (!it) return null; if (it.localName === 'm') return ''; const v = it.getAttribute('v'); if (it.localName === 'n'){ const st = styleAt(I.src, I.g.r1 + 1, I.g.c1 + fx); return formatValue(+v, (st && st.nf) || 'General').text; } if (it.localName === 'b') return v === '1' ? 'TRUE' : 'FALSE'; return v; };
+          const picked = items.filter(i => i.getAttribute('s') === '1').map(i => txtOf(kids[+i.getAttribute('x')])).filter(v => v != null); if (picked.length && picked.length < items.length) sel.push(...picked);
+          o = {target: {kind: 'pivot', sheetId: I.sh.id, pid: I.p.id}, col: I.g.c1 + fx, sel};
+          if (sel.length){ I.p.filter = {f: I.g.c1 + fx, vals: sel}; } }
+        else if (ts){ const T = tinfo[ts.getAttribute('tableId')]; if (!T) continue; const col = +ts.getAttribute('column') - 1; const f = T.sh.filter && T.sh.filter.cols && T.sh.filter.cols[T.t.range.c1 + col];
+          o = {target: {kind: 'table', sheetId: T.sh.id, table: T.t.name}, col, sel: f && f.values ? [...f.values] : []}; }
+        if (!o) continue; const at = pos[name] || {r: 0, c: 0, dx: 0, dy: 0, w: 170, h: 220};
+        (sh.slicers = sh.slicers || []).push({id: uid(), slicer: true, title: s.getAttribute('caption') || source, ...o, ...at}); } } }
+  async function readMeta(buf, wb){ const Z = await zread(buf); let meta = null;
+    for (const r of Object.values(Z.wrels)){ if (!/\/customXml$/.test(r.type)) continue; const s = await Z.txt(Z.join('xl/workbook.xml', r.t)); if (!s || !/urn:srk-sheets:meta/.test(s)) continue; const m = /<srk\b[^>]*>([^<]*)<\/srk>/.exec(s); if (m) try { meta = JSON.parse(decodeURIComponent(escape(atob(m[1].trim())))); } catch(e){ console.warn('SRK settings', e); } }
+    if (!meta || meta.v !== 1) return;
+    const tmp = new Set(meta.tmp || []); wb.sheets = wb.sheets.filter(s => !tmp.has(s.name)); wb.active = Math.min(wb.active, wb.sheets.length - 1);
+    const fix = v => JSON.parse(JSON.stringify(v), (k, x) => { if (k === 'sheetId' && typeof x === 'string' && x[0] === '§'){ const s = wb.sheets.find(y => y.name === x.slice(1)); return s ? s.id : null; } return x; });
+    if (meta.model) wb.model = fix(meta.model); if (meta.queries) wb.queries = fix(meta.queries);
+    for (const [name, m] of Object.entries(meta.sheets || {})){ const sh = wb.sheets.find(s => s.name === name); if (!sh) continue;
+      if (m.pivots) sh.pivots = fix(m.pivots).filter(p => p.src && wb.sheets.some(s => s.id === p.src.sheetId)); else sh.pivots = (sh.pivots || []).filter(p => wb.sheets.some(s => s.id === p.src.sheetId));
+      if (m.dmPivots) sh.dmPivots = fix(m.dmPivots); if (m.slicers) sh.slicers = fix(m.slicers).filter(o => o.target && o.target.sheetId);
+      for (const t of m.tables || []){ const x = sh.tables.find(y => y.range.r1 === t.r && y.range.c1 === t.c) || sh.tables.find(y => y.name === t.name); if (x){ x.name = t.name; if (t.style) x.style = t.style; if (t.banded === false) x.banded = false; if (t.filter === false) x.filter = false; } } }
+    for (const sh of wb.sheets) if (!meta.sheets || !meta.sheets[sh.name]) sh.pivots = (sh.pivots || []).filter(p => wb.sheets.some(s => s.id === p.src.sheetId)); }
   function parseCSV(text){
     text = text.replace(/^﻿/, ''); const first = text.split(/\r?\n/)[0] || ''; const delim = [',', ';', '\t', '|'].map(d => [d, first.split(d).length]).sort((a, b) => b[1] - a[1])[0][0];
     const rows = []; let row = [], cur = '', q = false;
@@ -396,5 +548,5 @@ const XIO = (() => {
     if (cur !== '' || row.length){ row.push(cur); rows.push(row); } return rows; }
   function readCSV(text, name){ const wb = newWorkbook(name); const sh = wb.sheets[0]; sh.name = name.slice(0, 31) || 'Sheet1'; parseCSV(text).forEach((row, r) => row.forEach((v, c) => { if (v === '') return; const p = parseInput(v); const x = {}; if (p.f != null) x.f = p.f; else x.v = p.v; if (p.nf) x.s = {nf: p.nf}; sh.cells[key(r, c)] = x; })); return wb; }
   function writeCSV(sh){ const {R, C} = Calc.lastRC(sh); const lines = []; for (let r = 0; r <= R; r++){ const row = []; for (let c = 0; c <= C; c++){ let t = displayAt(sh, r, c).text || ''; if (/[",\n\r]/.test(t)) t = '"' + t.replace(/"/g, '""') + '"'; row.push(t); } lines.push(row.join(',')); } return '﻿' + lines.join('\r\n'); }
-  return {readXlsx, writeXlsx, readCSV, writeCSV, parseCSV, PX_W, CH_W};
+  return {readXlsx, writeXlsx, notes: () => lastNotes, readCSV, writeCSV, parseCSV, PX_W, CH_W};
 })();
