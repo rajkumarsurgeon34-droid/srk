@@ -18,3 +18,9 @@ window.SRK_LIBS = { exceljs: 'libs/exceljs.min.js', sheetjs: 'libs/xlsx.full.min
     if (r !== 'ok' && window.UI) UI.toast('Couldn’t open the share menu.');
   };
 })();
+/* internet requests through the app (no browser CORS limits): srkFetch(url, {method, headers, body}) → {status, text} */
+(function(){
+  const waiting = new Map(); let n = 0;
+  window.__srkHttp = (id, status, b64) => { const w = waiting.get(id); if (!w) return; waiting.delete(id); let text = ''; try { const bin = atob(b64); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); text = new TextDecoder('utf-8').decode(u); } catch(e){} w({status, text}); };
+  window.srkFetch = (url, o = {}) => new Promise(res => { if (!window.SRKAndroid || !window.SRKAndroid.httpAsync){ res({status: 0, text: 'unavailable'}); return; } const id = 'h' + (++n); waiting.set(id, res); window.SRKAndroid.httpAsync(id, o.method || 'GET', url, JSON.stringify(o.headers || {}), o.body || ''); });
+})();

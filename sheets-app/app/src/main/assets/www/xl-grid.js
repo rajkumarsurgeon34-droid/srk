@@ -115,7 +115,7 @@ const Grid = (() => {
     $('#stkTop').querySelectorAll('.sel').forEach(n => n.style.cssText = `position:absolute;left:0;top:0;clip-path:inset(${hh()}px 0 0 0)`);
     if (!s.grid) $('#gspace').classList.add('nogrid'); else $('#gspace').classList.remove('nogrid');
     $('#gspace').classList.toggle('noheads', s.headings === false);
-    Objects.render(); placeEditor(); if (G.onRender) G.onRender();
+    Objects.render(); placeEditor(); if (G.onRender) G.onRender(); for (const f of (G.renderHooks || [])) try { f(); } catch(e){ console.error(e); }
   }
   /* ---------------------------------------------------------------- selection */
   function select(r, c, g, keepEdit){ if (G.edit && !keepEdit) commitEdit(); r = Math.max(0, Math.min(MAXR - 1, r)); c = Math.max(0, Math.min(MAXC - 1, c)); const m = mergeAt(G.sh, r, c); let gg = g ? norm(g) : m ? {...m} : {r1: r, c1: c, r2: r, c2: c};
@@ -195,6 +195,7 @@ const Grid = (() => {
   let drag = null;
   function onDown(e){
     if (e.button > 0) return; const t = e.target;
+    if (t.closest('.slb')){ e.preventDefault(); e.stopPropagation(); if (G.onSlicer) G.onSlicer(t.closest('.slb')); return; }
     if (t.closest('.olb')){ e.preventDefault(); e.stopPropagation(); const [ax, i] = t.closest('.olb').dataset.ol.split(':'); if (G.onOutline) G.onOutline(ax, +i); return; }
     if (t.closest('.fbtn')){ e.preventDefault(); if (G.onFilterBtn) G.onFilterBtn(+t.closest('.fbtn').dataset.fc, t.closest('.fbtn')); return; }
     if (t.closest('.dvbtn')){ e.preventDefault(); if (G.onDvBtn) G.onDvBtn(t.closest('.dvbtn')); return; }

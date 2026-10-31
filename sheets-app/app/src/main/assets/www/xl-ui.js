@@ -252,9 +252,9 @@ const UI = (() => {
       [['Cancel'], ['OK', 'primary', () => { const nf = cat.value === '__custom' ? custom.value.trim() : cat.value; setStyle(s => { s.nf = !nf || nf === 'General' ? null : nf; s.ha = ha.value || null; s.va = va.value === 'bottom' ? null : va.value; s.wrap = wrap.checked || null; s.ind = +ind.value || null; }); if (wrap.checked) for (let r = gsel().r1; r <= Math.min(gsel().r2, gsel().r1 + 500); r++) Grid.autoFitRows([r]); }]]); }
 
   /* ---------------------------------------------------------------- ribbon */
-  const TABS = [['file', 'File'], ['home', 'Home'], ['insert', 'Insert'], ['layout', 'Page Layout'], ['formulas', 'Formulas'], ['data', 'Data'], ['review', 'Review'], ['view', 'View']];
+  const TABS = [['file', 'File'], ['home', 'Home'], ['insert', 'Insert'], ['layout', 'Page Layout'], ['formulas', 'Formulas'], ['data', 'Data'], ['review', 'Review'], ['view', 'View'], ['automate', 'Automate']];
   let tab = 'home'; const R = {};
-  function ctxTab(){ const o = G.objSel && Objects.find(G.objSel); if (o) return o.chart ? ['chart', 'Chart'] : o.shape ? ['shape', 'Shape'] : ['picture', 'Picture']; if ((typeof More !== 'undefined') && More.ctxTab){ const t = More.ctxTab(); if (t) return t; } if (tableAt(sh(), sel().r, sel().c)) return ['tabled', 'Table']; return null; }
+  function ctxTab(){ const o = G.objSel && Objects.find(G.objSel); if (o) return o.chart ? ['chart', 'Chart'] : o.slicer ? ['slicer', 'Slicer'] : o.shape ? ['shape', 'Shape'] : ['picture', 'Picture']; if ((typeof More !== 'undefined') && More.ctxTab){ const t = More.ctxTab(); if (t) return t; } for (const x of SRK_EXT) if (x.ctxTab){ const t = x.ctxTab(); if (t) return t; } if (tableAt(sh(), sel().r, sel().c)) return ['tabled', 'Table']; return null; }
   function buildTabs(){ const list = [...TABS]; const c = ctxTab(); if (c) list.push(c); if (!list.some(t => t[0] === tab)) tab = 'home'; const box = $('#rtabs'); const sig = list.map(t => t[0]).join() + tab; if (box.dataset.sig === sig) return; box.dataset.sig = sig; box.innerHTML = '';
     for (const [k, n] of list){ const b = h('button', {class: 'rtab' + (c && k === c[0] ? ' ctx' : '') + (k === 'file' ? ' file' : ''), role: 'tab', type: 'button', 'aria-selected': k === tab ? 'true' : 'false'}, n); b.addEventListener('pointerdown', e => e.preventDefault()); b.addEventListener('click', () => { if (k === 'file'){ App.fileMenu(); return; } tab = k; buildTabs(); buildRibbon(); }); box.append(b); }
     buildRibbon(); }
@@ -330,6 +330,7 @@ const UI = (() => {
         if (t.header !== false) R.th.classList.add('on'); if (t.total) R.tt.classList.add('on'); if (t.banded !== false) R.tb.classList.add('on'); if (sh().filter) R.tf.classList.add('on'); }
     }
     if ((typeof More !== 'undefined')) More.ribbon(tab, r, {grp, rb, R, o, fileBtn});
+    for (const x of SRK_EXT) if (x.ribbon) try { x.ribbon(tab, r, {grp, rb, R, o, fileBtn}); } catch(e){ console.error(e); }
     refreshRibbon(); }
   function borderPop(anchor){ pop(anchor, p => { p.append(h('div', {class: 'ph'}, 'Borders')); for (const [k, n] of [['bottom', 'Bottom border'], ['top', 'Top border'], ['left', 'Left border'], ['right', 'Right border'], ['all', 'All borders'], ['outside', 'Outside borders'], ['thick', 'Thick outside borders'], ['double', 'Bottom double border'], ['thickbottom', 'Thick bottom border'], ['none', 'No border']]) p.append(mi(I.border, n, () => borders(k, borderPop.color || '#000000')));
     p.append(h('hr'), mi(I.color, 'Line colour…', () => colorPop(anchor, 'Line colour', c => { borderPop.color = c || '#000000'; toast('Pick a border to draw in this colour'); borderPop(anchor); }))); }); }
@@ -352,7 +353,7 @@ const UI = (() => {
   /* ---------------------------------------------------------------- formula bar, status */
   function onSel(){ const g = gsel(); const one = g.r1 === g.r2 && g.c1 === g.c2 || (mergeAt(sh(), g.r1, g.c1) && mergeAt(sh(), g.r1, g.c1).r2 === g.r2 && mergeAt(sh(), g.r1, g.c1).c2 === g.c2);
     $('#nameBox').value = one ? addr(sel().r, sel().c) : g.r1 === 0 && g.r2 >= MAXR - 1 ? `${colName(g.c1)}:${colName(g.c2)}` : g.c1 === 0 && g.c2 >= MAXC - 1 ? `${g.r1 + 1}:${g.r2 + 1}` : rangeAddr(g);
-    if (!G.edit) $('#fbar').value = editText(sh(), sel().r, sel().c); buildTabs(); refreshRibbon(); status(); noteTip(); }
+    if (!G.edit) $('#fbar').value = editText(sh(), sel().r, sel().c); buildTabs(); refreshRibbon(); status(); noteTip(); for (const f of (G.selHooks || [])) try { f(); } catch(e){ console.error(e); } }
   function status(){ const g = clampSel(); let n = 0, sum = 0, cnt = 0, mn = Infinity, mx = -Infinity; const s = sh(); const cells = (g.r2 - g.r1 + 1) * (g.c2 - g.c1 + 1) < 200000 ? null : usedCellsIn(s, g);
     const visit = (r, c) => { const v = valueAt(s, r, c); if (v == null || v === '') return; cnt++; if (typeof v === 'number'){ n++; sum += v; mn = Math.min(mn, v); mx = Math.max(mx, v); } };
     if (cells) cells.forEach(([r, c]) => visit(r, c)); else forRange(g, visit);
@@ -368,7 +369,7 @@ const UI = (() => {
       else if (fullC) p.append(mi(I.colI, 'Insert columns', () => insertCells('col')), mi(I.del, 'Delete columns', () => deleteCells('col')), mi(I.width, 'Column width…', () => sizeDialog('col')), mi(I.hide, 'Hide', () => hideCmd('col')), mi(I.hide, 'Unhide', () => hideCmd('col', true)));
       else p.append(mi(I.insert, 'Insert…', () => insertPop($('#fbar'))), mi(I.del, 'Delete…', () => deletePop($('#fbar'))), mi(I.clear, 'Clear contents', () => act('Clear', () => clearRange(s, clampSel(), 'contents'))), mi(I.fillD, 'Fill (drag the handle)', () => { G.fill = true; Grid.refresh(false); toast('Drag the filled handle to fill'); }));
       p.append(h('hr'), mi(I.sort, 'Sort A → Z', () => sortQuick(false)), mi(I.filter, 'Filter by this value', () => { const v = displayAt(s, sel().r, sel().c).text; if (!s.filter) s.filter = {range: dataRegion(), cols: {}}; act('Filter', () => { s.filter.cols[sel().c] = {values: [v]}; }, true); }), mi(I.note, s.notes[k] ? 'Edit note' : 'New note', noteDialog), mi(I.link, s.links[k] ? 'Edit link' : 'Link', linkDialog));
-      if (s.links[k]) p.append(mi(I.link, 'Open link', openLink)); if ((typeof More !== 'undefined')) More.context(p); p.append(mi(I.format, 'Format cells…', formatCellsDialog)); }, {x, y}); }
+      if (s.links[k]) p.append(mi(I.link, 'Open link', openLink)); if ((typeof More !== 'undefined')) More.context(p); for (const x of SRK_EXT) if (x.context) x.context(p); p.append(mi(I.format, 'Format cells…', formatCellsDialog)); }, {x, y}); }
   /* ---------------------------------------------------------------- keyboard */
   function onKey(e){
     if ($('#editView').hidden || document.querySelector('.dlg-back,.filemenu')) return; const mod = e.ctrlKey || e.metaKey, k = e.key;
@@ -376,6 +377,7 @@ const UI = (() => {
     if (inName){ if (k === 'Enter'){ e.preventDefault(); goTo($('#nameBox').value); $('#nameBox').blur(); } if (k === 'Escape'){ $('#nameBox').blur(); onSel(); } return; }
     if (mod && k.toLowerCase() === 's'){ e.preventDefault(); App.saveXlsx(); return; }
     if ((typeof More !== 'undefined') && !(G.edit && (inEd || inFbar)) && More.key(e)) return;
+    if (!(G.edit && (inEd || inFbar))) for (const x of SRK_EXT) if (x.key && x.key(e)) return;
     if (G.edit && (inEd || inFbar)){
       if (G.auto && !$('#autoBox').hidden && (k === 'Tab' || (k === 'Enter' && G.auto)) && G.auto.list){ e.preventDefault(); Grid.pickAuto(G.auto.list[0]); return; }
       if (k === 'Enter' && e.altKey){ e.preventDefault(); const ed = document.activeElement; const i = ed.selectionStart; ed.value = ed.value.slice(0, i) + '\n' + ed.value.slice(ed.selectionEnd); ed.setSelectionRange(i + 1, i + 1); patchWrap = true; Grid.placeEditor(); return; }

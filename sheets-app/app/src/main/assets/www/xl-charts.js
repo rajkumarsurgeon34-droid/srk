@@ -125,12 +125,12 @@ const Objects = (() => {
   const $ = s => document.querySelector(s); const G = () => Grid.G;
   function pos(o){ const z = Grid.z(); return {x: Grid.hw() + (Grid.colLeft[o.c] ?? 0) + (o.dx || 0) * z, y: Grid.hh() + (Grid.rowTop[o.r] ?? 0) + (o.dy || 0) * z, w: o.w * z, h: o.h * z}; }
   function render(){ const sh = G().sh; const main = $('#gmain'); if (!main) return; let html = (typeof More !== 'undefined') ? More.layerHTML(sh) : '';
-    for (const o of [...sh.images, ...(sh.shapes || []), ...sh.charts]){ const p = pos(o); const sel = G().objSel === o.id;
-      const inner = o.shape ? More.shapeSvg(o, p.w, p.h) : o.chart ? chartSvg({...o, w: p.w, h: p.h, data: chartData(sh, o), fontSize: Math.max(8, 11 * Grid.z()), colors: o.colors || XL_COLORS}, CHART_TH) : `<img src="${mediaOf(o.src)}" alt="" draggable="false">`;
-      html += `<div class="obj${o.chart ? ' chart' : o.shape ? ' shp' : ' pic'}${sel ? ' on' : ''}" data-oid="${o.id}" style="left:${p.x}px;top:${p.y}px;width:${p.w}px;height:${p.h}px">${inner}${sel ? '<i class="oh" data-h="nw"></i><i class="oh" data-h="ne"></i><i class="oh" data-h="sw"></i><i class="oh" data-h="se"></i>' : ''}</div>`; }
+    for (const o of [...sh.images, ...(sh.shapes || []), ...sh.charts, ...(sh.slicers || [])]){ const p = pos(o); const sel = G().objSel === o.id;
+      const inner = o.slicer ? PP.slicerHTML(o, p) : o.shape ? More.shapeSvg(o, p.w, p.h) : o.chart ? chartSvg({...o, w: p.w, h: p.h, data: chartData(sh, o), fontSize: Math.max(8, 11 * Grid.z()), colors: o.colors || XL_COLORS}, CHART_TH) : `<img src="${mediaOf(o.src)}" alt="" draggable="false">`;
+      html += `<div class="obj${o.chart ? ' chart' : o.slicer ? ' slicer' : o.shape ? ' shp' : ' pic'}${sel ? ' on' : ''}" data-oid="${o.id}" style="left:${p.x}px;top:${p.y}px;width:${p.w}px;height:${p.h}px">${inner}${sel ? '<i class="oh" data-h="nw"></i><i class="oh" data-h="ne"></i><i class="oh" data-h="sw"></i><i class="oh" data-h="se"></i>' : ''}</div>`; }
     let L = main.querySelector('.objs'); if (!L){ L = document.createElement('div'); L.className = 'objs'; main.appendChild(L); } L.innerHTML = html; }
   const mediaOf = src => src && src.startsWith('m:') ? (G().wb.media || {})[src.slice(2)] || '' : src || '';
-  const find = id => { const sh = G().sh; return sh.charts.find(o => o.id === id) || sh.images.find(o => o.id === id) || (sh.shapes || []).find(o => o.id === id); };
+  const find = id => { const sh = G().sh; return sh.charts.find(o => o.id === id) || sh.images.find(o => o.id === id) || (sh.shapes || []).find(o => o.id === id) || (sh.slicers || []).find(o => o.id === id); };
   let drag = null;
   function down(e){ e.preventDefault(); e.stopPropagation(); const el = e.target.closest('.obj'); const o = find(el.dataset.oid); if (!o) return; if (Grid.G.edit) Grid.commitEdit();
     const was = G().objSel === o.id; G().objSel = o.id; const h = e.target.closest('.oh'); drag = {o, mode: h ? h.dataset.h : 'move', x: e.clientX, y: e.clientY, p0: pos(o), was, moved: false};
@@ -143,6 +143,6 @@ const Objects = (() => {
   function up(){ document.removeEventListener('pointermove', move); const d = drag; drag = null; if (!d) return; if (d.moved){ if (G().onChange) G().onChange(); } else if (d.was && d.o.chart && G().onChartTap) G().onChartTap(d.o); else if (d.was && d.o.shape && (typeof More !== 'undefined')) More.editShape(d.o); }
   function deselect(){ G().objSel = null; render(); }
   function add(list, o){ const sh = G().sh; const g = G().sel.g; o.id = uid(); o.r = Math.min(g.r1, Grid.NR - 1); o.c = Math.min(g.c2 + 1, Grid.NC - 1); o.dx = 8; o.dy = 0; (sh[list] = sh[list] || []).push(o); G().objSel = o.id; render(); if (G().onObj) G().onObj(o); if (G().onChange) G().onChange(); }
-  function remove(id){ const sh = G().sh; sh.charts = sh.charts.filter(o => o.id !== id); sh.images = sh.images.filter(o => o.id !== id); if (sh.shapes) sh.shapes = sh.shapes.filter(o => o.id !== id); G().objSel = null; render(); if (G().onChange) G().onChange(); }
+  function remove(id){ const sh = G().sh; sh.charts = sh.charts.filter(o => o.id !== id); sh.images = sh.images.filter(o => o.id !== id); if (sh.shapes) sh.shapes = sh.shapes.filter(o => o.id !== id); if (sh.slicers) sh.slicers = sh.slicers.filter(o => o.id !== id); G().objSel = null; render(); if (G().onChange) G().onChange(); }
   return {render, down, deselect, add, remove, find, pos, mediaOf};
 })();

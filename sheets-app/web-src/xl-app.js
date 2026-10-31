@@ -64,8 +64,8 @@ const App = (() => {
   function dirty(){ if (!wb) return; wb.updated = Date.now(); $('#savedLbl').textContent = ''; clearTimeout(saveT); saveT = setTimeout(persist, 900); }
   async function persist(){ clearTimeout(saveT); if (!wb) return; try { await Store.put(wb, previewOf(wb)); $('#savedLbl').textContent = 'Saved'; } catch(e){ console.error(e); $('#savedLbl').textContent = 'Not saved'; } }
   function previewOf(w){ const s = w.sheets[w.active] || w.sheets[0]; const rows = []; try { for (let r = 0; r < 9; r++){ const row = []; for (let c = 0; c < 6; c++){ const x = cellAt(s, r, c); const st = x && x.s || {}; const ts = s.tables.length ? tableStyleAt(s, r, c) : null; row.push([x ? displayAt(s, r, c).text : '', st.fill || (ts && ts.fill) || '', st.color || (ts && ts.color) || '', st.b || (ts && ts.b) ? 1 : 0]); } rows.push(row); } } catch(e){} return rows; }
-  function edit(book){ wb = book; $('#startView').hidden = true; $('#editView').hidden = false; $('#docTitle').value = wb.name; $('#savedLbl').textContent = ''; UI.open(wb); try { history.pushState({srk: 'edit'}, ''); } catch(e){} }
-  async function goHome(){ if (Grid.G.edit) Grid.commitEdit(); await persist(); wb = null; $('#editView').hidden = true; $('#startView').hidden = false; document.querySelectorAll('.pop,.dlg-back,.filemenu,.notetip').forEach(e => e.remove()); renderStart(); }
+  function edit(book){ wb = book; $('#startView').hidden = true; $('#editView').hidden = false; $('#docTitle').value = wb.name; $('#savedLbl').textContent = ''; UI.open(wb); try { history.pushState({srk: 'edit'}, ''); } catch(e){} document.querySelectorAll('.secbar').forEach(x => x.remove()); for (const x of SRK_EXT) if (x.onOpen) try { x.onOpen(wb); } catch(e){ console.error(e); } if (typeof VBA !== 'undefined') VBA.onOpen(); }
+  async function goHome(){ if (Grid.G.edit) Grid.commitEdit(); for (const x of SRK_EXT) if (x.onClose) try { x.onClose(); } catch(e){} if (typeof CO !== 'undefined') CO.stop(); await persist(); wb = null; $('#editView').hidden = true; $('#startView').hidden = false; document.querySelectorAll('.pop,.dlg-back,.filemenu,.notetip').forEach(e => e.remove()); renderStart(); }
 
   /* ---------------------------------------------------------------- templates */
   function build(name, fn){ const w = newWorkbook(name); Calc.attach(w); fn(w, w.sheets[0]); Calc.invalidate(); for (const s of w.sheets){ const {R} = Calc.lastRC(s); for (let r = 0; r <= Math.min(R, 60); r++) Grid.autoFitRowIfWrap(r, s); } return w; }
@@ -156,7 +156,7 @@ const App = (() => {
     const O = $('#openRow'); O.innerHTML = ''; const lab = h('label', {class: 'btn primary filepick', html: FI('<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>') + '<span>Open Excel or CSV file</span>'});
     const inp = h('input', {type: 'file', accept: '.xlsx,.xlsm,.xls,.xlsb,.ods,.csv,.tsv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv', class: 'fileover'}); inp.addEventListener('change', () => { const f = inp.files[0]; inp.value = ''; if (f) openFile(f); }); lab.append(inp); O.append(lab, h('span', {class: 'hint'}, '.xlsx and .csv files'));
     if (window.claude && !window.SRK_NATIVE) $('#tipBox').hidden = false;
-    renderRecent(); }
+    renderRecent(); if (typeof CO !== 'undefined') CO.listShared(); }
   async function renderRecent(){ const R = $('#recent'); let list = []; try { list = await Store.list(); } catch(e){} R.innerHTML = ''; if (!list.length){ R.append(h('div', {class: 'empty'}, 'Workbooks you create or open appear here.')); return; }
     for (const m of list){ const when = new Date(m.updated); const meta = h('button', {class: 'meta', type: 'button'}, h('b', {}, m.name), h('small', {}, `${m.sheets} sheet${m.sheets === 1 ? '' : 's'} · ${when.toLocaleDateString(undefined, {day: 'numeric', month: 'short'})} ${when.toLocaleTimeString(undefined, {hour: 'numeric', minute: '2-digit'})}`));
       meta.addEventListener('click', async () => { const b = await Store.get(m.id); if (b){ b.media = b.media || {}; edit(b); } else toast('Couldn’t open that workbook'); });
@@ -176,7 +176,7 @@ const App = (() => {
 
   /* ---------------------------------------------------------------- saving */
   async function makeXlsx(){ if (Grid.G.edit) Grid.commitEdit(); await needExcel(); return XIO.writeXlsx(wb); }
-  async function saveXlsx(share){ try { busy('Preparing Excel file…'); const b = await makeXlsx(); unbusy(); const blob = new Blob([b], {type: XLSX_MIME}); const n = cleanName(wb.name, 'xlsx'); if (share) await shareFile(blob, n); else await saveFile(blob, n); } catch(e){ unbusy(); console.error(e); toast(e.message || 'Couldn’t save.', 4500); } }
+  async function saveXlsx(share){ try { busy('Preparing Excel file…'); const b = await makeXlsx(); unbusy(); const macro = !!wb.vbaBin; const blob = new Blob([b], {type: macro ? 'application/vnd.ms-excel.sheet.macroEnabled.12' : XLSX_MIME}); const n = cleanName(wb.name, macro ? 'xlsm' : 'xlsx'); if (share) await shareFile(blob, n); else await saveFile(blob, n); } catch(e){ unbusy(); console.error(e); toast(e.message || 'Couldn’t save.', 4500); } }
   async function saveOds(share){ try { busy('Preparing OpenDocument file…'); const b = await makeXlsx(); await needSheetJS(); const X = XLSX.read(new Uint8Array(b), {type: 'array', cellFormula: true, cellStyles: true}); const out = XLSX.write(X, {bookType: 'ods', type: 'array'}); unbusy(); const blob = new Blob([out], {type: MIME.ods}); const n = cleanName(wb.name, 'ods'); if (share) await shareFile(blob, n); else await saveFile(blob, n); } catch(e){ unbusy(); console.error(e); toast(e.message || 'Couldn’t save.', 4500); } }
   async function saveCsv(share){ if (Grid.G.edit) Grid.commitEdit(); const s = Grid.G.sh; const blob = new Blob(['﻿' + XIO.writeCSV(s)], {type: 'text/csv'}); const n = cleanName(wb.sheets.length > 1 ? `${wb.name} - ${s.name}` : wb.name, 'csv'); if (share) await shareFile(blob, n); else await saveFile(blob, n); }
 
@@ -278,6 +278,7 @@ const App = (() => {
         item('<path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5M9 13h6M9 17h6"/>', 'Save this sheet as CSV', 'Plain values, for other apps', () => saveCsv(false)),
         item('<path d="M6 9V3h12v6M6 17H4a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-2"/><rect x="6" y="14" width="12" height="7"/>', 'Print / save as PDF', 'Pages for printing or sending', printPdf), h('div', {class: 'fm-sep'}),
         item(share, 'Share as Excel', 'Send to WhatsApp, Gmail or Drive', () => saveXlsx(true)), item(share, 'Share as PDF', 'Send the sheet as PDF pages', printPdf), item(share, 'Share as CSV', 'Send this sheet’s values', () => saveCsv(true)), h('div', {class: 'fm-sep'}),
+        ...SRK_EXT.flatMap(x => x.fileItems ? x.fileItems((ic, label, sub, fn) => item(ic, label, sub, fn)) : []),
         item('<path d="M4 20h4L19 9l-4-4L4 16z"/>', 'Rename', wb.name, () => { const inp = h('input', {class: 'inp', value: wb.name}); dialog('Rename workbook', inp, [['Cancel'], ['Rename', 'primary', () => { wb.name = inp.value.trim() || 'Book'; $('#docTitle').value = wb.name; dirty(); }]]); }),
         item('<path d="M8 3h8l5 5v8l-5 5H8l-5-5V8z"/><path d="M12 8v5M12 16v.5"/>', 'Make a copy', 'Duplicate this workbook', async () => { await persist(); const c = JSON.parse(JSON.stringify(wb)); c.id = uid(); c.name = wb.name + ' (copy)'; edit(c); dirty(); toast('Copy made'); }),
         item('<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/>', 'Info', 'Sheets, cells and formulas', info),
@@ -302,5 +303,5 @@ const App = (() => {
     if (window.SRK_NATIVE && window.SRKSheets && SRKSheets.pendingIncoming){ try { const n = SRKSheets.pendingIncoming(); if (n) window.srkOpenIncoming(n); } catch(e){} }
   }
   setTimeout(boot, 0);
-  return {dirty, fileMenu, imageToData, printPdf, importCsv, info, toggleTheme, saveXlsx, saveCsv, makeXlsx, makePdf, openBytes, Store, get wb(){ return wb; }, TEMPLATES};
+  return {openBook: b => { edit(b); dirty(); }, saveFile, shareFile, needExcel, needSheetJS, dirty, fileMenu, imageToData, printPdf, importCsv, info, toggleTheme, saveXlsx, saveCsv, makeXlsx, makePdf, openBytes, Store, get wb(){ return wb; }, TEMPLATES};
 })();

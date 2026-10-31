@@ -1,5 +1,7 @@
 /* SRK Sheets — core: cell addresses, dates, input parsing, Excel number formats */
 'use strict';
+/* extension modules register here: {ribbon(tab, r, H), ctxTab(), context(menu), key(e), fileItems(item), tabs} */
+var SRK_EXT = [];
 const uid = () => Math.random().toString(36).slice(2, 10);
 const clone = o => JSON.parse(JSON.stringify(o));
 const MAXR = 1048576, MAXC = 16384;

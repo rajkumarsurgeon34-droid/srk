@@ -324,6 +324,41 @@ public class MainActivity extends AppCompatActivity {
 
     /* ---------- saving and sharing, called from the page ---------- */
     private class Bridge {
+        /** Internet request on a background thread; the answer comes back through window.__srkHttp(id, status, base64Body). */
+        @JavascriptInterface
+        public void httpAsync(final String id, final String method, final String url, final String headersJson, final String body) {
+            new Thread(() -> {
+                int status = 0; byte[] out = new byte[0];
+                try {
+                    java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+                    c.setRequestMethod(method == null || method.isEmpty() ? "GET" : method);
+                    c.setConnectTimeout(20000); c.setReadTimeout(120000);
+                    c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) SRKSheets/1.2");
+                    if (headersJson != null && !headersJson.isEmpty()) {
+                        org.json.JSONObject h = new org.json.JSONObject(headersJson);
+                        java.util.Iterator<String> it = h.keys();
+                        while (it.hasNext()) { String k = it.next(); c.setRequestProperty(k, h.getString(k)); }
+                    }
+                    if (body != null && !body.isEmpty()) {
+                        c.setDoOutput(true);
+                        try (java.io.OutputStream os = c.getOutputStream()) { os.write(body.getBytes("UTF-8")); }
+                    }
+                    status = c.getResponseCode();
+                    java.io.InputStream in = status >= 400 ? c.getErrorStream() : c.getInputStream();
+                    if (in != null) {
+                        java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream(); byte[] buf = new byte[16384]; int n;
+                        while ((n = in.read(buf)) > 0) bo.write(buf, 0, n);
+                        in.close(); out = bo.toByteArray();
+                    }
+                    c.disconnect();
+                } catch (Exception e) {
+                    status = 0; try { out = String.valueOf(e.getMessage()).getBytes("UTF-8"); } catch (Exception ignored) { }
+                }
+                final String js = "window.__srkHttp && window.__srkHttp(" + jsString(id) + "," + status + ",\"" + Base64.encodeToString(out, Base64.NO_WRAP) + "\")";
+                runOnUiThread(() -> web.evaluateJavascript(js, null));
+            }).start();
+        }
+
         @JavascriptInterface
         public String saveFile(String name, String mime, String base64) {
             try {

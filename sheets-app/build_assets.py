@@ -8,7 +8,7 @@ fonts = OUT + '/fonts'; keep = os.path.isdir(fonts) and shutil.move(fonts, '/tmp
 shutil.rmtree(OUT, ignore_errors=True); os.makedirs(OUT + '/libs')
 if keep: shutil.move('/tmp/srk-sheets-fonts', fonts)
 for name in ('jszip.min.js', 'pdf-lib.min.js', 'exceljs.min.js', 'xlsx.full.min.js'): shutil.copy(f'{LIBS}/{name}', f'{OUT}/libs/{name}')
-for f in ('xl-core.js', 'xl-formula.js', 'xl-model.js', 'xl-grid.js', 'xl-charts.js', 'xl-io.js', 'xl-ui.js', 'xl-more.js', 'xl-app.js'): shutil.copy(os.path.join(WEB, f), OUT)
+for f in ('xl-core.js', 'xl-formula.js', 'xl-model.js', 'xl-grid.js', 'xl-charts.js', 'xl-io.js', 'xl-ui.js', 'xl-more.js', 'xl-pq.js', 'xl-pp.js', 'xl-vba.js', 'xl-dt.js', 'xl-ai.js', 'xl-co.js', 'xl-app.js', 'geo.json', 'words.txt'): shutil.copy(os.path.join(WEB, f), OUT)
 shutil.copy('web/native.js', OUT)
 body = open(os.path.join(WEB, 'index.html')).read()
 body = re.sub(r'<script src="https://cdnjs[^"]+/jszip\.min\.js"></script>', '<script src="libs/jszip.min.js"></script>', body)

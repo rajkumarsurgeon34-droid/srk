@@ -154,7 +154,8 @@ const XIO = (() => {
       const filt = filteredRows(sh); for (const r in sh.hidR) ws.getRow(+r + 1).hidden = true; for (const r of filt) ws.getRow(r + 1).hidden = true;
       for (const k in sh.cells){ const [r, c] = unkey(k); const x = sh.cells[k]; const cell = ws.getCell(r + 1, c + 1); let st = x.s ? {...x.s} : null;
         const tst = tableStyleAt(sh, r, c); if (tst){ st = {...(tst.fill ? {fill: tst.fill} : {}), ...(tst.color ? {color: tst.color} : {}), ...(tst.b ? {b: true} : {}), ...(st || {})}; }
-        if (x.f != null){ const res = Calc.get(sh, r, c); const R = v => isErr(v) ? {error: ['#CIRC!', '#CALC!'].includes(v.e) ? (v.e === '#CALC!' ? '#VALUE!' : '#REF!') : v.e} : (v === null ? undefined : v); const sp = Calc.spillInfo(sh, r, c);
+        if (x.f != null && /\b(FIELDVALUE|STOCKHISTORY)\s*\(/i.test(x.f)){ const res = Calc.get(sh, r, c); cell.value = isErr(res) ? null : res; }
+        else if (x.f != null){ const res = Calc.get(sh, r, c); const R = v => isErr(v) ? {error: ['#CIRC!', '#CALC!'].includes(v.e) ? (v.e === '#CALC!' ? '#VALUE!' : '#REF!') : v.e} : (v === null ? undefined : v); const sp = Calc.spillInfo(sh, r, c);
           if (sp && sp.r === r && sp.c === c){ cell.value = {formula: toFile(x.f, wb), result: R(res), shareType: 'array', ref: rangeAddr({r1: r, c1: c, r2: r + sp.rows - 1, c2: c + sp.cols - 1})}; for (let i = 0; i < sp.rows; i++) for (let j = 0; j < sp.cols; j++) if (i || j){ const sv = Calc.get(sh, r + i, c + j); ws.getCell(r + i + 1, c + j + 1).value = isErr(sv) ? {error: sv.e} : sv; } }
           else cell.value = {formula: toFile(x.f, wb), result: R(res)}; }
         else if (isErr(x.v)) cell.value = {error: x.v.e}; else cell.value = x.v ?? null;
