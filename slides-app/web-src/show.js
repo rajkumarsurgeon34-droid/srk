@@ -98,7 +98,7 @@ const Show = (() => {
     const side = h('aside', {class: 'pside'}); const timer = h('div', {class: 'ptimer'}, '0:00'); const nextM = h('div', {class: 'pnext'}); const notesP = h('div', {class: 'pnotes'});
     side.append(h('div', {class: 'plbl'}, 'Elapsed'), timer, h('div', {class: 'plbl'}, 'Next slide'), nextM, h('div', {class: 'plbl'}, 'Notes'), notesP);
     ov.append(area, side, ctl); document.body.append(ov);
-    S = {deck, order, pos: Math.max(0, order.indexOf(from)), step: 0, groups: [], running: [], timers: [], ov, stage, area, layer: null, slideEl: null, mode: null, t0: Date.now(), ended: false, adv: null};
+    S = {bg: {}, deck, order, pos: Math.max(0, order.indexOf(from)), step: 0, groups: [], running: [], timers: [], ov, stage, area, layer: null, slideEl: null, mode: null, t0: Date.now(), ended: false, adv: null};
     if (window.SRKSlides && SRKSlides.setLandscape) try { SRKSlides.setLandscape(true); } catch(e){}
     try { if (!window.SRK_NATIVE && ov.requestFullscreen) ov.requestFullscreen().catch(() => {}); } catch(e){}
     try { navigator.wakeLock && navigator.wakeLock.request('screen').then(l => S && (S.lock = l)).catch(() => {}); } catch(e){}
@@ -110,7 +110,7 @@ const Show = (() => {
       clearTimers(); clearInk(); const {W, H, k} = geom(); stage.style.cssText = `width:${W * k}px;height:${H * k}px;margin-left:${-W * k / 2}px;margin-top:${-H * k / 2}px`;
       ink.width = Math.round(W * k * devicePixelRatio); ink.height = Math.round(H * k * devicePixelRatio);
       if (S.ended){ stage.querySelectorAll('.slayer').forEach(n => n.remove()); stage.prepend(h('div', {class: 'slayer end'}, 'End of slide show. Tap to exit.')); cnt.textContent = ''; return; }
-      const si = S.order[S.pos], s = deck.slides[si]; const el = renderSlide(s, deck, {edit: false}); el.style.transform = `scale(${k})`;
+      const si = S.order[S.pos], s = deck.slides[si]; const el = renderSlide(s, deck, {edit: false, live: true}); el.style.transform = `scale(${k})`; setupMedia(el, s, anim);
       const L = h('div', {class: 'slayer'}); L.append(el); const old = S.layer, oldEl = S.slideEl, prev = S.prevSlide;
       stage.insertBefore(L, ink); S.layer = L; S.slideEl = el; S.prevSlide = s; stage.querySelectorAll('.slayer.end').forEach(n => n.remove());
       S.groups = prepare(el, s, built); S.step = built ? S.groups.length : 0;
@@ -121,6 +121,20 @@ const Show = (() => {
       if (!built && S.groups[0] && S.groups[0].auto) playGroup();
       schedule();
     }
+    /* video & audio on the slide */
+    function setupMedia(el, s, anim){
+      const delay = anim && s.transition && s.transition !== 'none' ? (s.trDur || 0.8) * 1000 : 0;
+      for (const o of s.objects.filter(q => q.kind === 'media' && q.mtype !== 'online')){
+        const box = el.querySelector(`.obj[data-id="${o.id}"]`); if (!box) continue; let m = box.querySelector('video,audio');
+        if (o.mtype === 'audio' && o.across){ if (!S.bg[o.id]){ const a = new Audio(mediaUrl(o.ref)); a.loop = !!o.loop; S.bg[o.id] = a; wire(a, o); if (o.start === 'auto') S.timers.push(setTimeout(() => a.play().catch(() => {}), delay)); } m = S.bg[o.id]; box.querySelector('audio') && box.querySelector('audio').remove(); }
+        else wire(m, o);
+        if (o.mtype === 'audio') box.addEventListener('click', e => { e.stopPropagation(); m.paused ? m.play().catch(() => {}) : m.pause(); box.classList.toggle('playing', !m.paused); });
+        if (o.start === 'auto' && !(o.mtype === 'audio' && o.across)) S.timers.push(setTimeout(() => { m.play().then(() => box.classList.add('playing')).catch(() => {}); }, delay + 50));
+      }
+    }
+    function wire(m, o){ if (!m || m.dataset && m.dataset.wired) return; if (m.dataset) m.dataset.wired = '1'; m.volume = Math.max(0, Math.min(1, o.vol ?? 1)); const tr = o.trim;
+      if (tr && (tr.start || tr.end)){ const st = () => { if (tr.start && m.currentTime < tr.start - .05) m.currentTime = tr.start; }; m.addEventListener('loadedmetadata', st); m.addEventListener('play', st);
+        m.addEventListener('timeupdate', () => { if (tr.end && m.currentTime >= tr.end){ if (o.loop) m.currentTime = tr.start || 0; else { m.pause(); m.currentTime = tr.start || 0; } } }); } }
     function playGroup(){ const g = S.groups[S.step]; if (!g) return false; S.step++; const {H} = geom(); const s = deck.slides[S.order[S.pos]];
       let end = 0; for (const it of g.items){ const o = s.objects.find(q => q.id === it.x.obj); const el = S.slideEl.querySelector(`.obj[data-id="${it.x.obj}"]`); if (!o || !el) continue; S.timers.push(runItem(el, it, o, H, S.running)); end = Math.max(end, it.at + it.dur); }
       const nxt = S.groups[S.step]; if (nxt && nxt.auto) S.timers.push(setTimeout(playGroup, end));
@@ -134,7 +148,7 @@ const Show = (() => {
       else { if (S.pos <= 0) return; S.pos--; draw(false, true); }
     }
     function goTo(p){ S.ended = false; S.pos = p; draw(true); }
-    function end(){ if (!S) return; clearTimers(); clearInterval(tick); try { S.lock && S.lock.release(); } catch(e){} S = null; ov.remove(); document.removeEventListener('keydown', key, true); removeEventListener('resize', rs);
+    function end(){ if (!S) return; clearTimers(); Object.values(S.bg).forEach(a => { try { a.pause(); } catch(e){} }); clearInterval(tick); try { S.lock && S.lock.release(); } catch(e){} S = null; ov.remove(); document.removeEventListener('keydown', key, true); removeEventListener('resize', rs);
       if (window.SRKSlides && SRKSlides.setLandscape) try { SRKSlides.setLandscape(false); } catch(e){} try { if (document.fullscreenElement) document.exitFullscreen(); } catch(e){} Editor.layoutStage(); }
     function blackout(c){ S.blank = c; blank.style.background = c || 'transparent'; blank.style.display = c ? 'block' : 'none'; }
     function setMode(m){ S.mode = m; ov.dataset.mode = m || ''; penB.classList.toggle('on', m === 'pen'); lasB.classList.toggle('on', m === 'laser'); laser.style.display = 'none'; }
@@ -157,14 +171,14 @@ const Show = (() => {
     let sx = null, sy = null, drawing = false, uiT;
     const ui = () => { ov.classList.add('ui'); clearTimeout(uiT); uiT = setTimeout(() => ov.classList.remove('ui'), 3000); };
     const inkPt = e => { const r = ink.getBoundingClientRect(); return [(e.clientX - r.left) * devicePixelRatio, (e.clientY - r.top) * devicePixelRatio]; };
-    area.addEventListener('pointerdown', e => { if (e.target.closest('.sctl,.snav')) return;
+    area.addEventListener('pointerdown', e => { if (e.target.closest('.sctl,.snav')) return; if (e.target.closest('video,iframe,.obj.media')){ sx = null; return; }
       if (S.mode === 'pen'){ drawing = true; const c = ink.getContext('2d'); c.strokeStyle = '#E53935'; c.lineWidth = 3 * devicePixelRatio; c.lineCap = c.lineJoin = 'round'; c.beginPath(); c.moveTo(...inkPt(e)); area.setPointerCapture(e.pointerId); return; }
       if (S.mode === 'laser'){ laser.style.display = 'block'; laser.style.left = e.clientX + 'px'; laser.style.top = e.clientY + 'px'; area.setPointerCapture(e.pointerId); return; }
       sx = e.clientX; sy = e.clientY; });
     area.addEventListener('pointermove', e => { if (S.mode === 'pen' && drawing){ const c = ink.getContext('2d'); c.lineTo(...inkPt(e)); c.stroke(); return; } if (S.mode === 'laser'){ laser.style.display = 'block'; laser.style.left = e.clientX + 'px'; laser.style.top = e.clientY + 'px'; return; } if (e.pointerType === 'mouse') ui(); });
     area.addEventListener('pointerup', e => { if (S.mode === 'pen'){ drawing = false; return; } if (S.mode === 'laser'){ if (e.pointerType !== 'mouse') laser.style.display = 'none'; return; } if (sx == null) return; const dx = e.clientX - sx, dy = e.clientY - sy; sx = null;
       if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)){ go(dx < 0 ? 1 : -1); return; }
-      if (Math.abs(dx) < 12 && Math.abs(dy) < 12){ if (e.target.closest('a[href]')) return; if (e.pointerType !== 'mouse' && !ov.classList.contains('ui') && e.clientY > innerHeight * 0.78){ ui(); return; } go(e.clientX < area.getBoundingClientRect().left + area.clientWidth * 0.3 ? -1 : 1); } });
+      if (Math.abs(dx) < 12 && Math.abs(dy) < 12){ if (e.target.closest('a[href],video,iframe,.obj.media')) return; if (e.pointerType !== 'mouse' && !ov.classList.contains('ui') && e.clientY > innerHeight * 0.78){ ui(); return; } go(e.clientX < area.getBoundingClientRect().left + area.clientWidth * 0.3 ? -1 : 1); } });
     ov.addEventListener('contextmenu', e => e.preventDefault());
     draw(true); ui();
   }

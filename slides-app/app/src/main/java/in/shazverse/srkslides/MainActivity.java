@@ -18,6 +18,10 @@ import android.provider.OpenableColumns;
 import android.util.Base64;
 import android.webkit.JavascriptInterface;
 import android.webkit.MimeTypeMap;
+import android.webkit.PermissionRequest;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.FrameLayout;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
@@ -52,6 +56,10 @@ public class MainActivity extends AppCompatActivity {
     private static final String START = "https://" + HOST + "/assets/www/index.html";
     private static final int REQ_FILE = 11;
     private static final int REQ_PERM = 12;
+    private static final int REQ_MIC = 13;
+    private PermissionRequest pendingPerm;
+    private View fullView;
+    private WebChromeClient.CustomViewCallback fullCb;
 
     private WebView web;
     private ValueCallback<Uri[]> fileCallback;
@@ -87,7 +95,7 @@ public class MainActivity extends AppCompatActivity {
         s.setAllowFileAccess(false);
         s.setAllowContentAccess(true);
         s.setTextZoom(100);
-        s.setMediaPlaybackRequiresUserGesture(true);
+        s.setMediaPlaybackRequiresUserGesture(false);
 
         Bridge bridge = new Bridge();
         web.addJavascriptInterface(bridge, "SRKAndroid");
@@ -117,11 +125,39 @@ public class MainActivity extends AppCompatActivity {
             public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback, FileChooserParams params) {
                 return showChooser(callback, params);
             }
+
+            /* microphone for "Record audio" */
+            @Override
+            public void onPermissionRequest(final PermissionRequest request) {
+                runOnUiThread(() -> {
+                    boolean wantsMic = false;
+                    for (String r : request.getResources()) if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(r)) wantsMic = true;
+                    if (!wantsMic) { request.deny(); return; }
+                    if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                        request.grant(new String[]{PermissionRequest.RESOURCE_AUDIO_CAPTURE});
+                    } else {
+                        pendingPerm = request;
+                        requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQ_MIC);
+                    }
+                });
+            }
+
+            /* full-screen video */
+            @Override
+            public void onShowCustomView(View view, CustomViewCallback callback) {
+                if (fullView != null) { callback.onCustomViewHidden(); return; }
+                fullView = view; fullCb = callback;
+                ((ViewGroup) getWindow().getDecorView()).addView(view, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            }
+
+            @Override
+            public void onHideCustomView() { hideFull(); }
         });
 
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override
             public void handleOnBackPressed() {
+                if (fullView != null) { hideFull(); return; }
                 if (presenting) { web.evaluateJavascript("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}))", null); return; }
                 if (web.canGoBack()) web.goBack(); else finish();
             }
@@ -202,6 +238,7 @@ public class MainActivity extends AppCompatActivity {
 
         Set<String> mimes = new LinkedHashSet<>();
         boolean images = false;
+        boolean videos = false;
         String[] accept = params.getAcceptTypes();
         if (accept != null) {
             for (String group : accept) {
@@ -216,6 +253,7 @@ public class MainActivity extends AppCompatActivity {
                         mimes.add(t);
                     }
                     if (t.startsWith("image/")) images = true;
+                    if (t.startsWith("video/")) videos = true;
                 }
             }
         }
@@ -240,6 +278,20 @@ public class MainActivity extends AppCompatActivity {
         }
 
         try {
+            if (params.isCaptureEnabled() && videos && !images) {
+                Intent vid = new Intent(MediaStore.ACTION_VIDEO_CAPTURE);
+                try {
+                    File dir = new File(getCacheDir(), "camera");
+                    if (!dir.exists()) dir.mkdirs();
+                    File clip = new File(dir, "video_" + System.currentTimeMillis() + ".mp4");
+                    cameraUri = FileProvider.getUriForFile(this, getPackageName() + ".files", clip);
+                    vid.putExtra(MediaStore.EXTRA_OUTPUT, cameraUri);
+                    vid.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    vid.setClipData(ClipData.newRawUri("video", cameraUri));
+                } catch (Exception e) { cameraUri = null; }
+                startActivityForResult(vid, REQ_FILE);
+                return true;
+            }
             if (params.isCaptureEnabled() && camera != null) {
                 startActivityForResult(camera, REQ_FILE);
                 return true;
@@ -278,6 +330,24 @@ public class MainActivity extends AppCompatActivity {
             case "pptx": return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
             case "html": case "htm": return "text/html";
             default: return MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext);
+        }
+    }
+
+    private void hideFull() {
+        if (fullView == null) return;
+        ((ViewGroup) getWindow().getDecorView()).removeView(fullView);
+        fullView = null;
+        WebChromeClient.CustomViewCallback cb = fullCb; fullCb = null;
+        if (cb != null) cb.onCustomViewHidden();
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] results) {
+        super.onRequestPermissionsResult(requestCode, permissions, results);
+        if (requestCode == REQ_MIC && pendingPerm != null) {
+            if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) pendingPerm.grant(new String[]{PermissionRequest.RESOURCE_AUDIO_CAPTURE});
+            else pendingPerm.deny();
+            pendingPerm = null;
         }
     }
 

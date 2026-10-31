@@ -162,7 +162,7 @@ const Editor = (() => {
     const r = (o0.rot || 0) * Math.PI / 180, cos = Math.cos(r), sin = Math.sin(r);
     let lx = dx * cos + dy * sin, ly = -dx * sin + dy * cos;
     let nw = o0.w + hx * lx, nh = o0.h + hy * ly;
-    const keep = (o.kind === 'image' && hx && hy && !e.shiftKey) || (e.shiftKey && o.kind !== 'image' && hx && hy);
+    const keep = ((o.kind === 'image' || (o.kind === 'media' && o.mtype !== 'audio')) && hx && hy && !e.shiftKey) || (e.shiftKey && o.kind !== 'image' && hx && hy);
     if (keep && o0.w && o0.h){ const k = Math.max(nw / o0.w, nh / o0.h); nw = o0.w * k; nh = o0.h * k; }
     const min = o.geom === 'line' ? 0 : 8; nw = Math.max(nw, 8); nh = Math.max(nh, min);
     if (!hx) nw = o0.w; if (!hy) nh = o0.h;
@@ -523,7 +523,7 @@ const Editor = (() => {
 
   /* ---------------------------------------------------------------- ribbon */
   const TABS = [['file', 'File'], ['home', 'Home'], ['insert', 'Insert'], ['draw', 'Draw'], ['design', 'Design'], ['transitions', 'Transitions'], ['animations', 'Animations'], ['show', 'Slide Show'], ['review', 'Review'], ['view', 'View']];
-  function ctxTab(){ const o = selObj(); if (!o || E.multi.length) return o && E.multi.length ? ['shape', 'Arrange'] : null; return o.kind === 'image' ? ['picture', 'Picture'] : o.kind === 'table' ? ['table', 'Table'] : o.kind === 'chart' ? ['chart', 'Chart'] : o.kind === 'ink' ? ['ink', 'Drawing'] : ['shape', 'Shape']; }
+  function ctxTab(){ const o = selObj(); if (!o || E.multi.length) return o && E.multi.length ? ['shape', 'Arrange'] : null; return o.kind === 'image' ? ['picture', 'Picture'] : o.kind === 'table' ? ['table', 'Table'] : o.kind === 'chart' ? ['chart', 'Chart'] : o.kind === 'media' ? ['media', 'Playback'] : o.kind === 'ink' ? ['ink', 'Drawing'] : ['shape', 'Shape']; }
   function buildTabs(){
     const tabs = [...TABS]; const c = ctxTab(); if (c) tabs.push(c);
     if (!tabs.some(t => t[0] === E.tab)) E.tab = 'home';

@@ -191,7 +191,7 @@ const THEME_ORDER = ['office', 'prism', 'aurora', 'breeze', 'banner', 'shards', 
 const DEFAULT_LAY = {ins: [.06, .06, .05, .08], title: {x: .06, y: .2, w: .88, h: .38, sy: .62, sh: .18}};
 
 function themeOf(deck){
-  if (deck.theme === 'custom' && deck.themeData) return {deco: () => '', lay: DEFAULT_LAY, ...deck.themeData, key: 'custom'};
+  if (deck.theme === 'custom' && deck.themeData) return {lay: DEFAULT_LAY, ...deck.themeData, deco: () => '', key: 'custom'};
   const t = THEMES[deck.theme] || THEMES.office; const v = t.variants[deck.variant || 0] || t.variants[0];
   return {lay: DEFAULT_LAY, ...t, ...v, key: THEMES[deck.theme] ? deck.theme : 'office'};
 }

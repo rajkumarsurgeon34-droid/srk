@@ -16,7 +16,7 @@ const App = (() => {
   /* ---------------------------------------------------------------- storage */
   const Store = (() => {
     let dbp = null;
-    const db = () => dbp || (dbp = new Promise((res, rej) => { try { const r = indexedDB.open('srk-slides', 1); r.onupgradeneeded = () => { r.result.createObjectStore('decks', {keyPath: 'id'}); r.result.createObjectStore('meta', {keyPath: 'id'}); }; r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); } catch(e){ rej(e); } }));
+    const db = () => dbp || (dbp = new Promise((res, rej) => { try { const r = indexedDB.open('srk-slides', 2); r.onupgradeneeded = () => { const d = r.result; for (const n of ['decks', 'meta']) if (!d.objectStoreNames.contains(n)) d.createObjectStore(n, {keyPath: 'id'}); if (!d.objectStoreNames.contains('blobs')) d.createObjectStore('blobs'); }; r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); } catch(e){ rej(e); } }));
     const tx = async (store, mode, fn) => { const d = await db(); return new Promise((res, rej) => { const t = d.transaction(store, mode); const st = t.objectStore(store); const r = fn(st); t.oncomplete = () => res(r && r.result); t.onerror = () => rej(t.error); }); };
     return {
       async put(deck){
@@ -30,7 +30,9 @@ const App = (() => {
       },
       get: id => tx('decks', 'readonly', st => st.get(id)),
       list: async () => ((await tx('meta', 'readonly', st => st.getAll())) || []).sort((a, b) => b.updated - a.updated),
-      del: async id => { await tx('decks', 'readwrite', st => st.delete(id)); await tx('meta', 'readwrite', st => st.delete(id)); },
+      del: async id => { const d = await tx('decks', 'readonly', st => st.get(id)); if (d && d.blobIds) for (const b of d.blobIds) await tx('blobs', 'readwrite', st => st.delete(b)); await tx('decks', 'readwrite', st => st.delete(id)); await tx('meta', 'readwrite', st => st.delete(id)); },
+      putBlob: (id, blob) => tx('blobs', 'readwrite', st => st.put(blob, id)),
+      getBlob: id => tx('blobs', 'readonly', st => st.get(id)),
     };
   })();
 
@@ -84,7 +86,8 @@ const App = (() => {
     for (const s of model.slides){
       const sl = {id: uid(), layout: null, bg: s.bg ? {...s.bg} : null, transition: s.transition || 'none', notes: s.notes || '', objects: s.objects};
       if (sl.bg && sl.bg.image) sl.bg.image = put(sl.bg.image);
-      for (const o of sl.objects) if (o.kind === 'image' && o.src && o.src.startsWith('data:')) o.src = put(o.src);
+      for (const o of sl.objects){ if (o.kind === 'image' && o.src && o.src.startsWith('data:')) o.src = put(o.src);
+        if (o.kind === 'media'){ if (o.poster && o.poster.startsWith('data:')) o.poster = put(o.poster); if (o.bytes){ const id = uid(); const blob = new Blob([o.bytes], {type: o.mime || 'video/mp4'}); deck.pendingBlobs = deck.pendingBlobs || {}; deck.pendingBlobs[id] = blob; o.ref = 'b:' + id; delete o.bytes; deck.blobIds = [...(deck.blobIds || []), id]; } } }
       deck.slides.push(sl);
     }
     if (!deck.slides.length) deck.slides.push({id: uid(), layout: 'blank', bg: null, transition: 'none', notes: '', objects: []});
@@ -92,7 +95,7 @@ const App = (() => {
   }
   async function openBytes(bytes, name){
     busy('Opening…');
-    try { const model = await readPptx(new Uint8Array(bytes)); const deck = fromPptx(model, name.replace(/\.(pptx|ppt|potx)$/i, '')); await Store.put(deck); unbusy(); edit(deck); }
+    try { const model = await readPptx(new Uint8Array(bytes)); const deck = fromPptx(model, name.replace(/\.(pptx|ppt|potx)$/i, '')); for (const [id, b] of Object.entries(deck.pendingBlobs || {})){ await Store.putBlob(id, b); MEDIA_BLOBS.set(id, b); } delete deck.pendingBlobs; await Store.put(deck); unbusy(); edit(deck); }
     catch(e){ unbusy(); toast(e.message || 'Couldn’t open that file.', 5200); console.error(e); }
   }
   async function openFile(file){ if (!file) return; if (/\.pdf$/i.test(file.name)){ toast('That’s a PDF. SRK Slides opens PowerPoint (.pptx) files.', 4000); return; } openBytes(await file.arrayBuffer(), file.name); }
@@ -125,12 +128,22 @@ const App = (() => {
   async function bakeInk(o){ const W = Math.max(1, o.w), H = Math.max(1, o.h), k = 3;
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W * k}" height="${H * k}" viewBox="0 0 ${o.vw || W} ${o.vh || H}" preserveAspectRatio="none">${o.paths.map(p => `<path d="${p.d}" fill="none" stroke="${p.color}" stroke-opacity="${p.alpha || 1}" stroke-width="${p.width}" stroke-linecap="round" stroke-linejoin="round"/>`).join('')}</svg>`;
     const im = await loadImg('data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg)); const cv = document.createElement('canvas'); cv.width = W * k; cv.height = H * k; cv.getContext('2d').drawImage(im, 0, 0); return cv.toDataURL('image/png'); }
-  async function bakeDeck(deck){
+  const blobToData = b => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(b); });
+  async function toPng(src){ const im = await loadImg(src); const c = document.createElement('canvas'); c.width = im.naturalWidth || 640; c.height = im.naturalHeight || 360; c.getContext('2d').drawImage(im, 0, 0); return c.toDataURL('image/png'); }
+  async function bakeMedia(o, deck){
+    const c = {...o}; let cover = o.poster ? mediaSrc(deck, o.poster) : (o.mtype === 'audio' ? SPEAKER_ICON : VIDEO_POSTER);
+    try { if (!/^data:image\/png/.test(cover)) cover = await toPng(/^https?:/.test(cover) ? VIDEO_POSTER : cover); } catch(e){ cover = await toPng(VIDEO_POSTER); }
+    c.coverB64 = cover;
+    if (o.mtype !== 'online'){ const b = MEDIA_BLOBS.get((o.ref || '').slice(2)); if (!b) return null; const d = await blobToData(b); const mime = o.mime || b.type || (o.mtype === 'audio' ? 'audio/mpeg' : 'video/mp4'); c.dataB64 = mime + ';base64,' + d.slice(d.indexOf('base64,') + 7); c.ext = o.ext || 'mp4'; }
+    return c;
+  }
+  async function bakeDeck(deck, forPptx){
     const d = {...deck, media: {...deck.media}, slides: []}; const cache = new Map();
     for (const s of deck.slides){ const objs = [];
       for (const o of s.objects){
         if (o.kind === 'image' && (o.crop || o.mask || o.border || o.adjust || o.icon || /^data:image\/svg/.test(o.src || ''))){ const key = JSON.stringify([o.src, o.crop, o.mask, o.border, o.adjust, o.w, o.h]); let src = cache.get(key); if (!src){ try { src = await bakeImage(o, deck); } catch(e){ src = mediaSrc(deck, o.src); } cache.set(key, src); }
           const c = {...o, src, baked: true}; delete c.crop; delete c.mask; delete c.border; delete c.adjust; objs.push(c); }
+        else if (o.kind === 'media' && forPptx){ busy('Packing video and audio…'); const m = await bakeMedia(o, deck); if (m) objs.push(m); }
         else if (o.kind === 'ink'){ objs.push({id: o.id, kind: 'image', src: await bakeInk(o), x: o.x, y: o.y, w: o.w, h: o.h, rot: o.rot || 0, fx: o.fx, baked: true}); }
         else objs.push(o);
       }
@@ -153,7 +166,7 @@ const App = (() => {
       im.onerror = () => rej(new Error('Couldn’t draw a slide background.')); im.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg); });
   }
   async function makePptx(){
-    Editor.flush(); await needPptx(); const deck = Editor.deck; const cache = {}; const baked = await bakeDeck(deck);
+    Editor.flush(); await needPptx(); const deck = Editor.deck; const cache = {}; const baked = await bakeDeck(deck, true);
     return writePptx(exportModel(baked), {resolveBg: async s => { const b = backgroundSvg(deck, s); if (b.plain) return {color: b.color};
       return {image: cache[b.svg] || (cache[b.svg] = await rasterBg(b.svg, deck.size.w, deck.size.h))}; }});
   }
@@ -277,7 +290,9 @@ const App = (() => {
   let saveT = null;
   function scheduleSave(){ $('#savedLbl').textContent = 'Saving…'; clearTimeout(saveT); saveT = setTimeout(async () => { try { await Store.put(Editor.deck); $('#savedLbl').textContent = 'Saved on this phone'; } catch(e){ $('#savedLbl').textContent = 'Not saved'; } }, 900); }
   Editor.onChange = () => scheduleSave();
-  function edit(deck){
+  async function edit(deck){
+    const refs = new Set(); deck.slides.forEach(s => s.objects.forEach(o => { if (o.ref && o.ref.startsWith('b:')) refs.add(o.ref.slice(2)); }));
+    for (const id of refs) if (!MEDIA_BLOBS.has(id)){ try { const b = await Store.getBlob(id); if (b) MEDIA_BLOBS.set(id, b); } catch(e){} }
     $('#startView').hidden = true; $('#editView').hidden = false; $('#docTitle').value = deck.name; $('#savedLbl').textContent = 'Saved on this phone';
     Editor.open(deck); try { history.pushState({v: 'edit'}, ''); } catch(e){}
   }
@@ -329,5 +344,6 @@ const App = (() => {
   renderTemplates(); renderOpen(); renderRecent();
   if (window.SRK_NATIVE && window.SRKSlides && SRKSlides.pendingIncoming){ try { const n = SRKSlides.pendingIncoming(); if (n) window.srkOpenIncoming(n); } catch(e){} }
 
-  return {imageToData, fileMenu, present, savePptx, toggleTheme, Store, makePptx, exportModel, openBytes, dialog, info, bakeDeck, previewTransition: () => Show.previewTransition(), previewAnims: ids => Show.previewAnims(ids)};
+  const Blobs = {put: (id, b) => Store.putBlob(id, b), get: id => Store.getBlob(id)};
+  return {Blobs, imageToData, fileMenu, present, savePptx, toggleTheme, Store, makePptx, exportModel, openBytes, dialog, info, bakeDeck, previewTransition: () => Show.previewTransition(), previewAnims: ids => Show.previewAnims(ids)};
 })();

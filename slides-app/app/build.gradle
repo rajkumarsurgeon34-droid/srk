@@ -10,8 +10,8 @@ android {
         applicationId 'in.shazverse.srkslides'
         minSdk 23
         targetSdk 35
-        versionCode 4
-        versionName '1.0.3'
+        versionCode 5
+        versionName '1.0.4'
     }
 
     // A fixed key, so every new build installs over the old one without uninstalling

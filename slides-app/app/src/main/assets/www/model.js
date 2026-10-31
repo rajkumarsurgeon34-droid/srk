@@ -80,6 +80,12 @@ function resolve(o, th){
   return {font: s.font || (o.ph === 'title' ? th.head : th.body), size: s.size || defSize(o), color: s.color || (o.ph === 'title' ? th.title : th.text), bold: !!s.bold, accent: th.accent, border: isDark(th.bg) ? tint(th.accent, .2) : '#BFBFBF', italic: !!s.italic};
 }
 function slideBg(slide, deck){ if (slide.bg) return slide.bg; const th = themeOf(deck); return {color: th.bg}; }
+/* video & audio files live in their own store (App.Blobs); this is the in-memory copy for the open presentation */
+const MEDIA_BLOBS = new Map(), MEDIA_URLS = new Map();
+function mediaUrl(ref){ if (!ref) return ''; if (!ref.startsWith('b:')) return ref; const id = ref.slice(2); if (MEDIA_URLS.has(id)) return MEDIA_URLS.get(id); const b = MEDIA_BLOBS.get(id); if (!b) return ''; const u = URL.createObjectURL(b); MEDIA_URLS.set(id, u); return u; }
+const SPEAKER_ICON = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" width="192" height="192"><rect width="96" height="96" rx="18" fill="#E8ECF5"/><path d="M22 40h12l16-13v42L34 56H22z" fill="#3B4A6B"/><path d="M60 36a16 16 0 0 1 0 24M66 28a27 27 0 0 1 0 40" fill="none" stroke="#3B4A6B" stroke-width="5" stroke-linecap="round"/></svg>');
+const VIDEO_POSTER = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 90" width="640" height="360"><rect width="160" height="90" fill="#1d2433"/><circle cx="80" cy="45" r="17" fill="#ffffff" fill-opacity=".9"/><path d="M74 36v18l15-9z" fill="#1d2433"/></svg>');
+function youtubeId(u){ const m = String(u || '').match(/(?:youtu\.be\/|v=|embed\/|shorts\/)([\w-]{11})/); return m ? m[1] : null; }
 function mediaSrc(deck, src){ return src && src.startsWith('m:') ? (deck.media || {})[src.slice(2)] || '' : src || ''; }
 
 /* ---------------------------------------------------------------- renderer */
@@ -113,6 +119,12 @@ function renderObj(o, deck, th, opts = {}){
     el.appendChild(wrap); return el;
   }
   if (o.kind === 'chart'){ el.innerHTML = chartSvg(o, th); return el; }
+  if (o.kind === 'media'){ el.classList.add('media', o.mtype); const poster = o.poster ? mediaSrc(deck, o.poster) : o.mtype === 'audio' ? SPEAKER_ICON : VIDEO_POSTER;
+    if (opts.live){ el.dataset.live = '1'; if (o.mtype === 'online'){ const id = youtubeId(o.link); el.innerHTML = id ? `<iframe src="https://www.youtube.com/embed/${id}?playsinline=1&rel=0${o.start === 'auto' ? '&autoplay=1&mute=1' : ''}${o.loop ? '&loop=1&playlist=' + id : ''}" allow="autoplay; encrypted-media; fullscreen" allowfullscreen frameborder="0"></iframe>` : `<a class="mlink" href="${escA(o.link)}">${escA(o.link)}</a>`; return el; }
+      if (o.mtype === 'video'){ const v = document.createElement('video'); v.src = mediaUrl(o.ref); v.poster = poster; v.controls = true; v.playsInline = true; v.preload = 'metadata'; v.loop = !!o.loop; el.appendChild(v); return el; }
+      const a = document.createElement('audio'); a.src = mediaUrl(o.ref); a.preload = 'auto'; a.loop = !!o.loop; el.appendChild(a); const im = document.createElement('img'); im.src = poster; im.alt = 'Audio'; el.appendChild(im); if (o.hideInShow) el.style.visibility = 'hidden'; return el; }
+    const im = document.createElement('img'); im.src = poster; im.alt = o.name || o.mtype; im.draggable = false; el.appendChild(im);
+    if (o.mtype !== 'audio') el.insertAdjacentHTML('beforeend', `<span class="mbadge">${o.mtype === 'online' ? '▶ Online video' : '▶ Video'}</span>`); return el; }
   if (o.kind === 'ink'){ el.innerHTML = `<svg class="ink" viewBox="0 0 ${o.vw || o.w} ${o.vh || o.h}" preserveAspectRatio="none" width="100%" height="100%">${(o.paths || []).map(p => `<path d="${p.d}" fill="none" stroke="${p.color}" stroke-opacity="${p.alpha || 1}" stroke-width="${p.width}" stroke-linecap="round" stroke-linejoin="round"/>`).join('')}</svg>`; return el; }
   const st = resolve(o, th);
   const font = `font-family:${fontStack(st.font)};font-size:${st.size}px;color:${st.color};${st.bold ? 'font-weight:700;' : ''}${st.italic ? 'font-style:italic;' : ''}`;

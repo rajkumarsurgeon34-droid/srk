@@ -185,6 +185,13 @@ async function readPptx(bytes){
         if (!box) continue; box = tf(box);
         const rot = xf && at(xf, 'rot') ? (+at(xf, 'rot')) / 60000 : 0; const flipH = xf && at(xf, 'flipH') === '1', flipV = xf && at(xf, 'flipV') === '1';
         const base = {id: uidS(), x: r1(box.x), y: r1(box.y), w: r1(Math.max(box.w, 1)), h: r1(Math.max(box.h, t === 'cxnSp' ? 0 : 1)), rot: Math.round(rot)};
+        if (t === 'pic' && (descN(el, 'videoFile')[0] || descN(el, 'audioFile')[0])){
+          const vf = descN(el, 'videoFile')[0] || descN(el, 'audioFile')[0]; const audio = lname(vf) === 'audioFile'; const blip = descN(el, 'blip')[0]; const poster = blip ? await media(jp(sp, (slide.rels[rid(blip)] || {}).target)) : null;
+          const link = slide.rels[vf.getAttributeNS(PNS.r, 'link') || vf.getAttribute('r:link') || rid(vf)] || {}; const p14 = descN(el, 'media').find(m => rid(m)); const emb = p14 ? slide.rels[rid(p14)] : (link.mode !== 'External' ? link : null);
+          if (emb && emb.target){ const mp = jp(sp, emb.target); const f = zip.file(mp); if (f){ const bytes = await f.async('uint8array'); const ext = mp.split('.').pop().toLowerCase(); const mime = (audio ? {mp3: 'audio/mpeg', m4a: 'audio/mp4', wav: 'audio/wav', wma: 'audio/x-ms-wma', ogg: 'audio/ogg', webm: 'audio/webm', aac: 'audio/aac'} : {mp4: 'video/mp4', m4v: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm', wmv: 'video/x-ms-wmv', avi: 'video/x-msvideo'})[ext] || (audio ? 'audio/mpeg' : 'video/mp4');
+            objects.push({...base, kind: 'media', mtype: audio ? 'audio' : 'video', bytes, mime, ext, poster, name: mp.split('/').pop(), start: 'click', vol: 1}); continue; } }
+          if (link.mode === 'External' && link.target){ objects.push({...base, kind: 'media', mtype: 'online', link: link.target, poster, name: 'Online video', start: 'click'}); continue; }
+        }
         if (t === 'pic'){ const blip = descN(el, 'blip')[0]; const src = blip ? await media(jp(sp, (slide.rels[rid(blip)] || {}).target)) : null; if (src){ const sr = descN(el, 'srcRect')[0]; const cr = sr ? {l: (+at(sr, 'l') || 0) / 1e5, t: (+at(sr, 't') || 0) / 1e5, r: (+at(sr, 'r') || 0) / 1e5, b: (+at(sr, 'b') || 0) / 1e5} : null; objects.push({...base, kind: 'image', src, ...(cr && (cr.l || cr.t || cr.r || cr.b) ? {crop: cr} : {})}); } continue; }
         if (t === 'graphicFrame'){
           const tbl = descN(el, 'tbl')[0];
@@ -315,8 +322,8 @@ function transitionXml(s){
 }
 const ANIM_PRESET = {appear: [1, 'entr', 0], fade: [10, 'entr', 0], fly: [2, 'entr', 4], float: [42, 'entr', 0], wipe: [22, 'entr', 8], zoom: [53, 'entr', 16], grow: [31, 'entr', 0], bounce: [26, 'entr', 0],
   pulse: [26, 'emph', 0], spin: [8, 'emph', 0], teeter: [32, 'emph', 0], grow2: [6, 'emph', 0], fadeout: [10, 'exit', 0], flyout: [2, 'exit', 4], zoomout: [53, 'exit', 16], disappear: [1, 'exit', 0]};
-function timingXml(anims, spid){
-  const list = (anims || []).filter(x => spid[x.obj]); if (!list.length) return {xml: '', bld: ''};
+function timingXml(anims, spid, media = []){
+  const list = (anims || []).filter(x => spid[x.obj]); media = media.filter(m => spid[m.id]); if (!list.length && !media.length) return {xml: '', bld: ''};
   let id = 3; const nid = () => id++;
   const tgt = sp => `<p:tgtEl><p:spTgt spid="${sp}"/></p:tgtEl>`;
   const vis = (sp, val, delay = 0) => `<p:set><p:cBhvr><p:cTn id="${nid()}" dur="1" fill="hold"><p:stCondLst><p:cond delay="${delay}"/></p:stCondLst></p:cTn>${tgt(sp)}<p:attrNameLst><p:attrName>style.visibility</p:attrName></p:attrNameLst></p:cBhvr><p:to><p:strVal val="${val}"/></p:to></p:set>`;
@@ -351,7 +358,12 @@ function timingXml(anims, spid){
       seqs += `<p:par><p:cTn id="${nid()}" fill="hold"><p:stCondLst><p:cond delay="${sq.delay}"/></p:stCondLst><p:childTnLst>${items}</p:childTnLst></p:cTn></p:par>`; }
     body += `<p:par><p:cTn id="${nid()}" fill="hold"><p:stCondLst>${outerCond}</p:stCondLst><p:childTnLst>${seqs}</p:childTnLst></p:cTn></p:par>`;
   }
-  const xml = `<p:timing><p:tnLst><p:par><p:cTn id="1" dur="indefinite" restart="never" nodeType="tmRoot"><p:childTnLst><p:seq concurrent="1" nextAc="seek"><p:cTn id="2" dur="indefinite" nodeType="mainSeq"><p:childTnLst>${body}</p:childTnLst></p:cTn><p:prevCondLst><p:cond evt="onPrev" delay="0"><p:tgtEl><p:sldTgt/></p:tgtEl></p:cond></p:prevCondLst><p:nextCondLst><p:cond evt="onNext" delay="0"><p:tgtEl><p:sldTgt/></p:tgtEl></p:cond></p:nextCondLst></p:seq></p:childTnLst></p:cTn></p:par></p:tnLst>`;
+  const autos = media.filter(m => m.auto);
+  if (autos.length){ const calls = autos.map(m => `<p:par><p:cTn id="${nid()}" presetID="1" presetClass="mediacall" presetSubtype="0" fill="hold" nodeType="${list.length ? 'withEffect' : 'afterEffect'}"><p:stCondLst><p:cond delay="0"/></p:stCondLst><p:childTnLst><p:cmd type="call" cmd="playFrom(${(m.start || 0).toFixed(1)})"><p:cBhvr><p:cTn id="${nid()}" dur="${m.dur ? Math.round(m.dur * 1000) : 'indefinite'}" fill="hold"/><p:tgtEl><p:spTgt spid="${spid[m.id]}"/></p:tgtEl></p:cBhvr></p:cmd></p:childTnLst></p:cTn></p:par>`).join('');
+    body = `<p:par><p:cTn id="${nid()}" fill="hold"><p:stCondLst><p:cond delay="indefinite"/><p:cond evt="onBegin" delay="0"><p:tn val="2"/></p:cond></p:stCondLst><p:childTnLst><p:par><p:cTn id="${nid()}" fill="hold"><p:stCondLst><p:cond delay="0"/></p:stCondLst><p:childTnLst>${calls}</p:childTnLst></p:cTn></p:par></p:childTnLst></p:cTn></p:par>` + body; }
+  const nodes = media.map(m => { const tag = m.audio ? 'audio' : 'video'; return `<p:${tag}><p:cMediaNode vol="${Math.round((m.vol ?? 1) * 100000)}"${m.hide ? ' showWhenStopped="0"' : ''}><p:cTn id="${nid()}" fill="hold"${m.audio ? '' : ' display="0"'}${m.loop ? ' repeatCount="indefinite"' : ''}><p:stCondLst><p:cond delay="indefinite"/></p:stCondLst></p:cTn><p:tgtEl><p:spTgt spid="${spid[m.id]}"/></p:tgtEl></p:cMediaNode></p:${tag}>`; }).join('');
+  const seq = body ? `<p:seq concurrent="1" nextAc="seek"><p:cTn id="2" dur="indefinite" nodeType="mainSeq"><p:childTnLst>${body}</p:childTnLst></p:cTn><p:prevCondLst><p:cond evt="onPrev" delay="0"><p:tgtEl><p:sldTgt/></p:tgtEl></p:cond></p:prevCondLst><p:nextCondLst><p:cond evt="onNext" delay="0"><p:tgtEl><p:sldTgt/></p:tgtEl></p:cond></p:nextCondLst></p:seq>` : '';
+  const xml = `<p:timing><p:tnLst><p:par><p:cTn id="1" dur="indefinite" restart="never" nodeType="tmRoot"><p:childTnLst>${seq}${nodes}</p:childTnLst></p:cTn></p:par></p:tnLst>`;
   const bld = [...new Set(list.map(x => spid[x.obj]))].filter(sp => spid._text && spid._text.has(sp)).map(sp => `<p:bldP spid="${sp}" grpId="0" animBg="1"/>`).join('');
   let n = 0; const fixed = xml.replace(/<p:cTn id="\d+"/g, () => `<p:cTn id="${++n}"`); // ids in document order
   return {xml: fixed + (bld ? `<p:bldLst>${bld}</p:bldLst>` : '') + '</p:timing>'};
@@ -369,6 +381,7 @@ async function writePptx(deck, {resolveBg}){
       const name = 'srk-' + o.id; const fx = o.fx || {};
       const pos = {x: I(o.x), y: I(o.y), w: I(Math.max(o.w, 1)), h: I(Math.max(o.h, o.kind === 'box' && o.geom === 'line' ? 0 : 1))}; if (o.rot) pos.rotate = o.rot;
       if (o.kind === 'image'){ sl.addImage({data: o.src, ...pos, objectName: name, altText: o.alt || '', ...(fx.opacity != null && fx.opacity < 1 ? {transparency: Math.round((1 - fx.opacity) * 100)} : {}), ...(o.flipH ? {flipH: true} : {}), ...(o.flipV ? {flipV: true} : {})}); continue; }
+      if (o.kind === 'media'){ const {rotate, ...mpos} = pos; sl.addMedia({...mpos, objectName: name, cover: o.coverB64, ...(o.mtype === 'online' ? {type: 'online', link: o.link} : {type: o.mtype, data: o.dataB64, extn: o.ext})}); continue; }
       if (o.kind === 'chart'){
         const types = {column: 'bar', bar: 'bar', line: 'line', area: 'area', pie: 'pie', doughnut: 'doughnut'}; const pie = o.chart === 'pie' || o.chart === 'doughnut';
         const d = o.data || {labels: [], series: []}; const data = (pie ? d.series.slice(0, 1) : d.series).map(se => ({name: se.name, labels: d.labels.map(String), values: d.labels.map((_, i) => +se.values[i] || 0)}));
@@ -402,16 +415,18 @@ async function writePptx(deck, {resolveBg}){
     if (s.notes) sl.addNotes(s.notes);
   }
   const bytes = await pres.write({outputType: 'uint8array'});
-  const need = deck.slides.some(s => (s.transition && s.transition !== 'none') || s.advance || (s.anims && s.anims.length));
+  const need = deck.slides.some(s => (s.transition && s.transition !== 'none') || s.advance || (s.anims && s.anims.length) || s.objects.some(o => o.kind === 'media' && o.mtype !== 'online'));
   if (!need) return bytes;
   const z = await JSZip.loadAsync(bytes);
   for (let i = 0; i < deck.slides.length; i++){
     const s = deck.slides[i]; const p = `ppt/slides/slide${i + 1}.xml`; const f = z.file(p); if (!f) continue;
     let x = await f.async('string'); let add = '';
     const tr = transitionXml(s); if (tr && !x.includes('<p:transition')) add += tr;
-    if (s.anims && s.anims.length && !x.includes('<p:timing')){
+    const media = s.objects.filter(o => o.kind === 'media' && o.mtype !== 'online').map(o => ({id: o.id, audio: o.mtype === 'audio', auto: o.start === 'auto', loop: !!o.loop, vol: o.vol, hide: !!o.hideInShow, dur: o.trim && o.trim.end ? o.trim.end - (o.trim.start || 0) : o.dur, start: o.trim ? o.trim.start : 0}));
+    for (const m of media.filter(m => m.audio)){ const i = x.indexOf(`name="srk-${m.id}"`); if (i > 0){ const j = x.indexOf('<a:videoFile', i); if (j > 0 && j - i < 600) x = x.slice(0, j) + '<a:audioFile' + x.slice(j + 12); } }
+    if (((s.anims && s.anims.length) || media.length) && !x.includes('<p:timing')){
       const spid = {}; spid._text = new Set(); const re = /<p:(sp|pic|graphicFrame)>\s*<p:nv\w+Pr>\s*<p:cNvPr id="(\d+)" name="srk-([^"]+)"/g; let m; while ((m = re.exec(x))){ spid[m[3]] = m[2]; if (m[1] === 'sp') spid._text.add(m[2]); }
-      add += timingXml(s.anims, spid).xml;
+      add += timingXml(s.anims, spid, media).xml;
     }
     if (!add) continue;
     x = x.includes('<p:extLst>') && x.lastIndexOf('<p:extLst>') > x.lastIndexOf('</p:cSld>') ? x.slice(0, x.lastIndexOf('<p:extLst>')) + add + x.slice(x.lastIndexOf('<p:extLst>')) : x.replace('</p:sld>', add + '</p:sld>');
