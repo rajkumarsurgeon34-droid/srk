@@ -93,6 +93,7 @@ const XIO = (() => {
     try { for (const d of (X.definedNames.model || [])){ if (!d.name || /^_xlnm/.test(d.name)) continue; wb.names[d.name] = (d.ranges || [])[0]; } } catch(e){}
     try { await readCharts(buf, wb); } catch(e){ console.warn('charts', e); }
     try { await readSparks(buf, wb); } catch(e){ console.warn('sparklines', e); }
+    try { await readPivots(buf, wb); } catch(e){ console.warn('pivots', e); }
     if (!wb.sheets.length) wb.sheets.push(newSheet('Sheet1'));
     const act = (X.views && X.views[0] && X.views[0].activeTab) || 0; wb.active = Math.min(act, wb.sheets.length - 1);
     return wb;
@@ -123,7 +124,7 @@ const XIO = (() => {
     const sheetsX = [...wbx.getElementsByTagNameNS('*', 'sheet')];
     for (const s of sheetsX){ const sh = wb.sheets.find(x => x.name === s.getAttribute('name')); if (!sh) continue; const rid = s.getAttributeNS(RNS, 'id') || s.getAttribute('r:id'); const path = join('xl/workbook.xml', wrels[rid].t); const srels = await rels(path);
       for (const r of Object.values(srels)){ if (!/\/drawing$/.test(r.type)) continue; const dp = join(path, r.t); const dx = await txt(dp); if (!dx) continue; const drels = await rels(dp); const D = P(dx);
-        for (const anc of [...D.documentElement.children]){ const ch = anc.getElementsByTagNameNS('*', 'chart')[0]; if (!ch) continue; const cr = drels[ch.getAttributeNS(RNS, 'id') || ch.getAttribute('r:id')]; if (!cr) continue; const cx = await txt(join(dp, cr.t)); if (!cx) continue; const C = P(cx);
+        for (const anc of [...D.documentElement.children]){ const spx = [...anc.children].find(e => e.localName === 'sp' || e.localName === 'cxnSp'); if (spx){ try { const o = readShape(anc, spx, sh); if (o) (sh.shapes = sh.shapes || []).push(o); } catch(e){ console.warn('shape', e); } continue; } const ch = anc.getElementsByTagNameNS('*', 'chart')[0]; if (!ch) continue; const cr = drels[ch.getAttributeNS(RNS, 'id') || ch.getAttribute('r:id')]; if (!cr) continue; const cx = await txt(join(dp, cr.t)); if (!cx) continue; const C = P(cx);
           const plot = C.getElementsByTagNameNS('*', 'plotArea')[0]; if (!plot) continue; const kinds = ['barChart', 'bar3DChart', 'lineChart', 'line3DChart', 'areaChart', 'pieChart', 'pie3DChart', 'doughnutChart', 'scatterChart', 'radarChart']; const ce = [...plot.children].find(e => kinds.includes(e.localName)); if (!ce) continue;
           const dir = (ce.getElementsByTagNameNS('*', 'barDir')[0] || {getAttribute: () => 'col'}).getAttribute('val'); const k = ce.localName; const grp = (ce.getElementsByTagNameNS('*', 'grouping')[0] || {getAttribute: () => ''}).getAttribute('val'); const multi = [...plot.children].filter(e => kinds.includes(e.localName)).length > 1; const type = multi && /bar/.test(k) ? 'combo' : /bar/.test(k) ? (dir === 'bar' ? (grp === 'stacked' ? 'barStack' : 'bar') : grp === 'stacked' ? 'colStack' : grp === 'percentStacked' ? 'col100' : 'column') : /scatter/.test(k) ? 'scatter' : /line/.test(k) ? 'line' : /area/.test(k) ? (grp === 'stacked' ? 'areaStack' : 'area') : /doughnut/.test(k) ? 'doughnut' : /radar/.test(k) ? 'radar' : 'pie';
           const refs = [...ce.getElementsByTagNameNS('*', 'f')].map(f => f.textContent); let g = null; let srcSheet = null;
@@ -175,7 +176,8 @@ const XIO = (() => {
     }
     for (const [n, ref] of Object.entries(wb.names)){ try { X.definedNames.add(ref.replace(/^=/, ''), n); } catch(e){} }
     await Promise.all(protects); let buf = await X.xlsx.writeBuffer();
-    if (wb.sheets.some(s => s.charts.length)) buf = await addCharts(buf, wb);
+    if (wb.sheets.some(s => s.charts.length || (s.shapes || []).length)) buf = await addCharts(buf, wb);
+    if (wb.sheets.some(s => (s.pivots || []).some(p => p.out))) try { buf = await addPivots(buf, wb); } catch(e){ console.warn('pivots', e); }
     if (wb.sheets.some(s => (s.sparks || []).length)) buf = await addSparks(buf, wb);
     return buf;
   }
@@ -226,7 +228,7 @@ const XIO = (() => {
     const wbx = await z.file('xl/workbook.xml').async('string'); const wrel = await z.file('xl/_rels/workbook.xml.rels').async('string');
     const sheetPath = name => { const m = new RegExp(`<sheet [^>]*name="${xmlA(name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"[^>]*r:id="([^"]+)"`).exec(wbx); if (!m) return null; const t = new RegExp(`Id="${m[1]}"[^>]*Target="([^"]+)"|Target="([^"]+)"[^>]*Id="${m[1]}"`).exec(wrel); const tg = t[1] || t[2]; return tg.startsWith('/') ? tg.slice(1) : 'xl/' + tg.replace(/^\.\//, ''); };
     let drawN = Object.keys(z.files).filter(p => /^xl\/drawings\/drawing\d+\.xml$/.test(p)).length;
-    for (const sh of wb.sheets){ if (!sh.charts.length) continue; const sp = sheetPath(sh.name); if (!sp) continue; const relP = sp.replace(/([^\/]+)$/, '_rels/$1.rels');
+    for (const sh of wb.sheets){ if (!sh.charts.length && !(sh.shapes || []).length) continue; const sp = sheetPath(sh.name); if (!sp) continue; const relP = sp.replace(/([^\/]+)$/, '_rels/$1.rels');
       let srel = z.file(relP) ? await z.file(relP).async('string') : '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>';
       let sx = await z.file(sp).async('string'); let dPath, dx, drel;
       const m = /<drawing r:id="([^"]+)"\/>/.exec(sx); if (m){ const t = new RegExp(`Id="${m[1]}"[^>]*Target="([^"]+)"|Target="([^"]+)"[^>]*Id="${m[1]}"`).exec(srel); dPath = 'xl/drawings/' + (t[1] || t[2]).split('/').pop(); dx = await z.file(dPath).async('string'); const drP = dPath.replace(/([^\/]+)$/, '_rels/$1.rels'); drel = z.file(drP) ? await z.file(drP).async('string') : null; }
@@ -240,6 +242,7 @@ const XIO = (() => {
       for (const o of sh.charts){ chartN++; const rid = 'rIdC' + chartN; z.file(`xl/charts/chart${chartN}.xml`, chartXml(sh, o)); drel = drel.replace('</Relationships>', `<Relationship Id="${rid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="../charts/chart${chartN}.xml"/></Relationships>`);
         ctx = ctx.replace('</Types>', `<Override PartName="/xl/charts/chart${chartN}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/></Types>`);
         const end = endCell(sh, o); dx = dx.replace('</xdr:wsDr>', `<xdr:twoCellAnchor editAs="oneCell"><xdr:from><xdr:col>${o.c}</xdr:col><xdr:colOff>${Math.round((o.dx || 0) * EMU)}</xdr:colOff><xdr:row>${o.r}</xdr:row><xdr:rowOff>${Math.round((o.dy || 0) * EMU)}</xdr:rowOff></xdr:from><xdr:to><xdr:col>${end.c}</xdr:col><xdr:colOff>${Math.round(end.dx * EMU)}</xdr:colOff><xdr:row>${end.r}</xdr:row><xdr:rowOff>${Math.round(end.dy * EMU)}</xdr:rowOff></xdr:to><xdr:graphicFrame macro=""><xdr:nvGraphicFramePr><xdr:cNvPr id="${1000 + chartN}" name="Chart ${chartN}"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr><xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xdr:xfrm><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart r:id="${rid}"/></a:graphicData></a:graphic></xdr:graphicFrame><xdr:clientData/></xdr:twoCellAnchor></xdr:wsDr>`); }
+      (sh.shapes || []).forEach((o, i) => { dx = dx.replace('</xdr:wsDr>', shapeXml(sh, o, 3000 + chartN * 50 + i + drawN * 500) + '</xdr:wsDr>'); });
       z.file(sp, sx); z.file(relP, srel); z.file(dPath, dx); z.file(dPath.replace(/([^\/]+)$/, '_rels/$1.rels'), drel);
     }
     z.file('[Content_Types].xml', ctx);
@@ -275,6 +278,116 @@ const XIO = (() => {
     return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><c:roundedCorners val="0"/><c:chart>${title}<c:plotArea><c:layout/>${body}${ax}</c:plotArea>${o.legend !== false ? '<c:legend><c:legendPos val="b"/><c:overlay val="0"/></c:legend>' : ''}<c:plotVisOnly val="1"/><c:dispBlanksAs val="gap"/></c:chart><c:spPr><a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill><a:ln w="9525"><a:solidFill><a:srgbClr val="D9D9D9"/></a:solidFill></a:ln></c:spPr></c:chartSpace>`;
   }
   /* ---------------------------------------------------------------- CSV */
+  /* ---------------------------------------------------------------- shapes (DrawingML) */
+  const PRST = {rect: 'rect', round: 'roundRect', ellipse: 'ellipse', triangle: 'triangle', arrow: 'rightArrow', larrow: 'leftArrow', star: 'star5', callout: 'wedgeRectCallout', line: 'line', textbox: 'rect'};
+  const PRST_IN = {rect: 'rect', roundRect: 'round', snipRoundRect: 'round', round2SameRect: 'round', flowChartAlternateProcess: 'round', ellipse: 'ellipse', flowChartConnector: 'ellipse', triangle: 'triangle', rtTriangle: 'triangle', flowChartExtract: 'triangle', rightArrow: 'arrow', notchedRightArrow: 'arrow', stripedRightArrow: 'arrow', leftArrow: 'larrow', star5: 'star', star4: 'star', star6: 'star', star7: 'star', star8: 'star', star10: 'star', star12: 'star', star16: 'star', star24: 'star', star32: 'star', wedgeRectCallout: 'callout', wedgeRoundRectCallout: 'callout', wedgeEllipseCallout: 'callout', cloudCallout: 'callout', line: 'line', straightConnector1: 'line', bentConnector3: 'line', curvedConnector3: 'line'};
+  const hex = c => String(c || '').replace('#', '').toUpperCase().slice(0, 6);
+  const fillX = c => c === 'none' ? '<a:noFill/>' : `<a:solidFill><a:srgbClr val="${hex(c)}"/></a:solidFill>`;
+  function absXY(sh, r, c, dx, dy){ let x = dx || 0, y = dy || 0; for (let i = 0; i < c; i++) x += sh.colW[i] ?? DEF_W; for (let i = 0; i < r; i++) y += sh.rowH[i] ?? DEF_H; return {x, y}; }
+  function anchorXml(sh, o){ const end = endCell(sh, o); return `<xdr:from><xdr:col>${o.c}</xdr:col><xdr:colOff>${Math.round((o.dx || 0) * EMU)}</xdr:colOff><xdr:row>${o.r}</xdr:row><xdr:rowOff>${Math.round((o.dy || 0) * EMU)}</xdr:rowOff></xdr:from><xdr:to><xdr:col>${end.c}</xdr:col><xdr:colOff>${Math.round(end.dx * EMU)}</xdr:colOff><xdr:row>${end.r}</xdr:row><xdr:rowOff>${Math.round(end.dy * EMU)}</xdr:rowOff></xdr:to>`; }
+  function shapeXml(sh, o, id){
+    const tb = o.shape === 'textbox', isLine = o.shape === 'line'; const fill = o.fill === null || tb && !o.fill ? 'none' : o.fill || '#4472C4'; const line = o.line === null ? 'none' : o.line || (tb ? '#A6A6A6' : shade(o.fill || '#4472C4', .3));
+    const p = absXY(sh, o.r, o.c, o.dx, o.dy); const xfrm = `<a:xfrm${isLine && !o.flip ? ' flipV="1"' : ''}><a:off x="${Math.round(p.x * EMU)}" y="${Math.round(p.y * EMU)}"/><a:ext cx="${Math.round(o.w * EMU)}" cy="${Math.round(o.h * EMU)}"/></a:xfrm>`;
+    const name = (SHAPE_NAMES[o.shape] || 'Shape') + ' ' + (id % 1000);
+    const lnX = line === 'none' ? '<a:ln><a:noFill/></a:ln>' : `<a:ln w="${isLine ? 31750 : 12700}">${fillX(line)}</a:ln>`;
+    if (isLine) return `<xdr:twoCellAnchor editAs="oneCell">${anchorXml(sh, o)}<xdr:cxnSp macro=""><xdr:nvCxnSpPr><xdr:cNvPr id="${id}" name="${xmlA(name)}"/><xdr:cNvCxnSpPr/></xdr:nvCxnSpPr><xdr:spPr>${xfrm}<a:prstGeom prst="line"><a:avLst/></a:prstGeom>${lnX}</xdr:spPr></xdr:cxnSp><xdr:clientData/></xdr:twoCellAnchor>`;
+    const algn = o.align === 'left' ? 'l' : o.align === 'right' ? 'r' : 'ctr'; const tc = o.color || (tb ? '#000000' : '#FFFFFF'); const sz = Math.round((o.size || 11) * 100);
+    const rPr = `<a:rPr lang="en-US" sz="${sz}"${o.b ? ' b="1"' : ''}>${fillX(tc)}${o.font ? `<a:latin typeface="${xmlA(o.font)}"/><a:cs typeface="${xmlA(o.font)}"/>` : ''}</a:rPr>`;
+    const paras = String(o.text || '').split('\n').map(t => `<a:p><a:pPr algn="${algn}"/>${t ? `<a:r>${rPr}<a:t>${xmlA(t)}</a:t></a:r>` : `<a:endParaRPr lang="en-US" sz="${sz}"/>`}</a:p>`).join('');
+    return `<xdr:twoCellAnchor editAs="oneCell">${anchorXml(sh, o)}<xdr:sp macro="" textlink=""><xdr:nvSpPr><xdr:cNvPr id="${id}" name="${xmlA(name)}"/><xdr:cNvSpPr${tb ? ' txBox="1"' : ''}/></xdr:nvSpPr><xdr:spPr>${xfrm}<a:prstGeom prst="${PRST[o.shape] || 'rect'}"><a:avLst/></a:prstGeom>${fillX(fill)}${lnX}</xdr:spPr><xdr:txBody><a:bodyPr vertOverflow="clip" horzOverflow="clip" wrap="square" rtlCol="0" anchor="${tb ? 't' : 'ctr'}"/><a:lstStyle/>${paras}</xdr:txBody></xdr:sp><xdr:clientData/></xdr:twoCellAnchor>`; }
+  const SHAPE_NAMES = {rect: 'Rectangle', round: 'Rounded Rectangle', ellipse: 'Oval', triangle: 'Isosceles Triangle', arrow: 'Right Arrow', larrow: 'Left Arrow', star: '5-Point Star', callout: 'Speech Bubble', line: 'Straight Connector', textbox: 'TextBox'};
+  /* anchor (two-cell, one-cell or absolute) → our cell position + pixel size */
+  function anchorIn(anc, sh){ const kid = n => [...anc.children].find(e => e.localName === n); const gv = (el, n) => +((el && el.getElementsByTagNameNS('*', n)[0] || {}).textContent || 0);
+    const from = kid('from'), to = kid('to'), ext = kid('ext'), pos = kid('pos'); let r0, c0, dxo, dyo, w = 120, h = 80;
+    if (from){ c0 = gv(from, 'col'); r0 = gv(from, 'row'); dxo = gv(from, 'colOff') / EMU; dyo = gv(from, 'rowOff') / EMU; }
+    else if (pos){ let x = +pos.getAttribute('x') / EMU, y = +pos.getAttribute('y') / EMU; c0 = 0; while (x >= (sh.colW[c0] ?? DEF_W)){ x -= sh.colW[c0] ?? DEF_W; c0++; } r0 = 0; while (y >= (sh.rowH[r0] ?? DEF_H)){ y -= sh.rowH[r0] ?? DEF_H; r0++; } dxo = x; dyo = y; }
+    else return null;
+    if (to){ let W = 0; for (let i = c0; i < gv(to, 'col'); i++) W += sh.colW[i] ?? DEF_W; let H = 0; for (let i = r0; i < gv(to, 'row'); i++) H += sh.rowH[i] ?? DEF_H; w = W + gv(to, 'colOff') / EMU - dxo; h = H + gv(to, 'rowOff') / EMU - dyo; }
+    else if (ext){ w = +ext.getAttribute('cx') / EMU; h = +ext.getAttribute('cy') / EMU; }
+    return {r: r0, c: c0, dx: Math.round(dxo), dy: Math.round(dyo), w: Math.round(Math.max(4, w)), h: Math.round(Math.max(4, h))}; }
+  function readShape(anc, sp, sh){ const at = anchorIn(anc, sh); if (!at) return null; const q = (el, n) => el ? [...el.getElementsByTagNameNS('*', n)] : []; const kid = (el, n) => el ? [...el.children].find(e => e.localName === n) : null;
+    const spPr = kid(sp, 'spPr'); const geom = q(spPr, 'prstGeom')[0]; const prst = geom ? geom.getAttribute('prst') : 'rect'; const txBox = q(sp, 'cNvSpPr').some(e => e.getAttribute('txBox') === '1');
+    let shape = sp.localName === 'cxnSp' ? 'line' : txBox ? 'textbox' : PRST_IN[prst] || (/arrow/i.test(prst) ? 'arrow' : /star/i.test(prst) ? 'star' : /callout/i.test(prst) ? 'callout' : /ellipse|oval|circle|pie|donut/i.test(prst) ? 'ellipse' : /triangle/i.test(prst) ? 'triangle' : /round/i.test(prst) ? 'round' : 'rect');
+    const clr = el => { const s = el && q(el, 'srgbClr')[0]; return s ? '#' + s.getAttribute('val').toUpperCase() : undefined; };
+    const o = {id: uid(), shape, ...at}; const sf = kid(spPr, 'solidFill'); if (kid(spPr, 'noFill')) o.fill = null; else if (sf){ const c = clr(sf); if (c) o.fill = c; } else if (shape === 'textbox') o.fill = '';
+    const ln = kid(spPr, 'ln'); if (ln){ if (kid(ln, 'noFill')) o.line = null; else { const c = clr(kid(ln, 'solidFill')); if (c) o.line = c; } } else if (shape === 'textbox' && !kid(sp, 'style')) o.line = null;
+    if (shape === 'line'){ const xf = q(spPr, 'xfrm')[0]; const fv = xf && xf.getAttribute('flipV') === '1', fh = xf && xf.getAttribute('flipH') === '1'; if (fv === fh) o.flip = true; }
+    if (shape === 'line' && o.line === undefined){ const st = kid(sp, 'style'); o.line = '#4472C4'; if (st && !q(st, 'schemeClr').length) o.line = '#000000'; }
+    const body = kid(sp, 'txBody'); if (body){ const ps = q(body, 'p'); o.text = ps.map(p => q(p, 't').map(t => t.textContent).join('')).join('\n').replace(/\n+$/, ''); const rp = q(body, 'rPr')[0] || q(body, 'defRPr')[0]; if (rp){ if (rp.getAttribute('sz')) o.size = +rp.getAttribute('sz') / 100; if (rp.getAttribute('b') === '1') o.b = true; const c = clr(kid(rp, 'solidFill')); if (c) o.color = c; const lat = kid(rp, 'latin'); if (lat && !/^\+/.test(lat.getAttribute('typeface'))) o.font = lat.getAttribute('typeface'); }
+      const pp = q(body, 'pPr')[0]; const al = pp && pp.getAttribute('algn'); if (al === 'l') o.align = 'left'; else if (al === 'r') o.align = 'right'; else if (shape === 'textbox' && al !== 'ctr') o.align = 'left'; } else o.text = '';
+    if (shape === 'textbox' && !o.color) o.color = '#000000'; return o; }
+
+  /* ---------------------------------------------------------------- PivotTables (pivotCache + pivotTable parts) */
+  const SUBT = {Sum: 'sum', Count: 'count', Average: 'average', Max: 'max', Min: 'min', Product: 'product', 'Count distinct': 'count'}; const SUBT_IN = {sum: 'Sum', count: 'Count', countNums: 'Count', average: 'Average', max: 'Max', min: 'Min', product: 'Product', stdDev: 'Average', stdDevp: 'Average', var: 'Average', varp: 'Average'};
+  const SHOW = {pctTotal: 'percentOfTotal', pctRow: 'percentOfRow', pctCol: 'percentOfCol'}; const SHOW_IN = {percentOfTotal: 'pctTotal', percentOfRow: 'pctRow', percentOfCol: 'pctCol'};
+  async function addPivots(buf, wb){
+    const z = await JSZip.loadAsync(buf); let ctx = await z.file('[Content_Types].xml').async('string'); let wbx = await z.file('xl/workbook.xml').async('string'); let wrel = await z.file('xl/_rels/workbook.xml.rels').async('string');
+    const sheetPath = name => { const m = new RegExp(`<sheet [^>]*name="${xmlA(name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"[^>]*r:id="([^"]+)"`).exec(wbx); if (!m) return null; const t = new RegExp(`Id="${m[1]}"[^>]*Target="([^"]+)"|Target="([^"]+)"[^>]*Id="${m[1]}"`).exec(wrel); const tg = t[1] || t[2]; return tg.startsWith('/') ? tg.slice(1) : 'xl/' + tg.replace(/^\.\//, ''); };
+    const REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships', MAIN = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'; const emptyRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>';
+    let n = 0; const caches = [];
+    for (const sh of wb.sheets){ const list = (sh.pivots || []).filter(p => p.out); if (!list.length) continue; const sp = sheetPath(sh.name); if (!sp) continue; const relP = sp.replace(/([^\/]+)$/, '_rels/$1.rels'); let srel = z.file(relP) ? await z.file(relP).async('string') : emptyRels;
+      for (const def of list){ const src = wb.sheets.find(s => s.id === def.src.sheetId); if (!src) continue; const g = def.src.g; n++;
+        const nf = g.c2 - g.c1 + 1; const names = []; for (let c = g.c1; c <= g.c2; c++){ let nm = String(displayAt(src, g.r1, c).text || 'Column' + (c - g.c1 + 1)).trim() || 'Column' + (c - g.c1 + 1); let base = nm, k = 2; while (names.some(x => x.toLowerCase() === nm.toLowerCase())) nm = base + k++; names.push(nm); }
+        const fi = c => c == null ? null : c - g.c1; const rowsF = [def.rows, def.rows2].filter(c => c != null).map(fi), colF = def.cols != null ? fi(def.cols) : null; const filtF = def.filter ? fi(def.filter.f) : null; const axis = new Set([...rowsF, ...(colF != null ? [colF] : [])]);
+        const usePage = filtF != null && !axis.has(filtF) && def.out.r1 >= 2; const itemF = new Set([...axis, ...(usePage ? [filtF] : [])]);
+        // shared items for axis/page fields
+        const shared = {}; for (const f of itemF){ const c = g.c1 + f; const seen = new Map(); let blank = false, allNum = true; for (let r = g.r1 + 1; r <= g.r2; r++){ const v = Calc.get(src, r, c); if (v == null || v === ''){ blank = true; continue; } if (typeof v !== 'number') allNum = false; const t = displayAt(src, r, c).text; if (!seen.has(t)) seen.set(t, v); }
+          const items = [...seen.entries()].map(([t, v]) => ({t, v})); if (blank) items.push({blank: true, t: '(blank)'}); shared[f] = {items, allNum, blank}; }
+        const sharedXml = f => { const S = shared[f]; if (!S) return '<sharedItems/>'; const vals = S.items.filter(x => !x.blank); if (S.allNum && vals.length){ const nums = vals.map(x => x.v); const int = nums.every(Number.isInteger); return `<sharedItems${S.blank ? ' containsBlank="1"' : ''} containsSemiMixedTypes="0" containsString="0" containsNumber="1"${int ? ' containsInteger="1"' : ''} minValue="${Math.min(...nums)}" maxValue="${Math.max(...nums)}" count="${S.items.length}">${S.items.map(x => x.blank ? '<m/>' : `<n v="${x.v}"/>`).join('')}</sharedItems>`; }
+          return `<sharedItems${S.blank ? ' containsBlank="1"' : ''} count="${S.items.length}">${S.items.map(x => x.blank ? '<m/>' : `<s v="${xmlA(x.t)}"/>`).join('')}</sharedItems>`; };
+        const cache = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><pivotCacheDefinition xmlns="${MAIN}" xmlns:r="${REL}" refreshOnLoad="1" saveData="0" createdVersion="6" refreshedVersion="6" minRefreshableVersion="3" recordCount="0"><cacheSource type="worksheet"><worksheetSource ref="${rangeAddr(g)}" sheet="${xmlA(src.name)}"/></cacheSource><cacheFields count="${nf}">${names.map((nm, i) => `<cacheField name="${xmlA(nm)}" numFmtId="0">${sharedXml(i)}</cacheField>`).join('')}</cacheFields></pivotCacheDefinition>`;
+        z.file(`xl/pivotCache/pivotCacheDefinition${n}.xml`, cache); caches.push(n);
+        wrel = wrel.replace('</Relationships>', `<Relationship Id="rIdPC${n}" Type="${REL}/pivotCacheDefinition" Target="pivotCache/pivotCacheDefinition${n}.xml"/></Relationships>`);
+        ctx = ctx.replace('</Types>', `<Override PartName="/xl/pivotCache/pivotCacheDefinition${n}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.pivotCacheDefinition+xml"/><Override PartName="/xl/pivotTables/pivotTable${n}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.pivotTable+xml"/></Types>`);
+        // data fields with unique captions
+        const dnames = []; const dfs = def.vals.map(v => { const f = fi(v.f); let nm = `${v.agg === 'Count distinct' ? 'Count' : v.agg} of ${names[f]}`; let base = nm, k = 2; while (dnames.includes(nm) || names.includes(nm)) nm = base + ' ' + k++; dnames.push(nm); return {f, nm, sub: SUBT[v.agg] || 'sum'}; });
+        const dataSet = new Set(dfs.map(d => d.f)); const hidden = new Set(def.filter ? def.filter.vals : []);
+        const pf = names.map((_, i) => { const at = rowsF.includes(i) ? ' axis="axisRow"' : i === colF ? ' axis="axisCol"' : usePage && i === filtF ? ' axis="axisPage" multipleItemSelectionAllowed="1"' : ''; const df = dataSet.has(i) ? ' dataField="1"' : '';
+          if (!itemF.has(i)) return `<pivotField${df} showAll="0"/>`; const S = shared[i]; const filt = def.filter && i === filtF; return `<pivotField${at}${df} showAll="0"><items count="${S.items.length + 1}">${S.items.map((x, j) => `<item x="${j}"${filt && !hidden.has(x.blank ? '' : x.t) ? ' h="1"' : ''}/>`).join('')}<item t="default"/></items></pivotField>`; }).join('');
+        const colFields = [...(colF != null ? [colF] : []), ...(dfs.length > 1 ? [-2] : [])]; const hasCols = colFields.length > 0;
+        const ptn = `PivotTable${(sh.pivots || []).indexOf(def) + 1}`; const show = SHOW[def.show];
+        const pt = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><pivotTableDefinition xmlns="${MAIN}" name="${ptn}" cacheId="${n}" applyNumberFormats="0" applyBorderFormats="0" applyFontFormats="0" applyPatternFormats="0" applyAlignmentFormats="0" applyWidthHeightFormats="1" dataCaption="Values" updatedVersion="6" minRefreshableVersion="3" useAutoFormatting="1" itemPrintTitles="1" createdVersion="6" indent="0" outline="1" outlineData="1" multipleFieldFilters="0">`
+          + `<location ref="${rangeAddr(def.out)}" firstHeaderRow="1" firstDataRow="${hasCols ? 2 : 1}" firstDataCol="1"${usePage ? ' rowPageCount="1" colPageCount="1"' : ''}/>`
+          + `<pivotFields count="${nf}">${pf}</pivotFields>` + (rowsF.length ? `<rowFields count="${rowsF.length}">${rowsF.map(f => `<field x="${f}"/>`).join('')}</rowFields>` : '')
+          + (hasCols ? `<colFields count="${colFields.length}">${colFields.map(f => `<field x="${f}"/>`).join('')}</colFields>` : '')
+          + (usePage ? `<pageFields count="1"><pageField fld="${filtF}" hier="-1"/></pageFields>` : '')
+          + `<dataFields count="${dfs.length}">${dfs.map(d => `<dataField name="${xmlA(d.nm)}" fld="${d.f}" subtotal="${d.sub}" baseField="0" baseItem="0"${show ? ` showDataAs="${show}" numFmtId="10"` : ''}/>`).join('')}</dataFields>`
+          + `<pivotTableStyleInfo name="PivotStyleLight16" showRowHeaders="1" showColHeaders="1" showRowStripes="0" showColStripes="0" showLastColumn="1"/></pivotTableDefinition>`;
+        z.file(`xl/pivotTables/pivotTable${n}.xml`, pt); z.file(`xl/pivotTables/_rels/pivotTable${n}.xml.rels`, emptyRels.replace('</Relationships>', `<Relationship Id="rId1" Type="${REL}/pivotCacheDefinition" Target="../pivotCache/pivotCacheDefinition${n}.xml"/></Relationships>`));
+        srel = srel.replace('</Relationships>', `<Relationship Id="rIdPT${n}" Type="${REL}/pivotTable" Target="../pivotTables/pivotTable${n}.xml"/></Relationships>`); }
+      z.file(relP, srel); }
+    if (!caches.length) return buf;
+    const pc = `<pivotCaches>${caches.map(i => `<pivotCache cacheId="${i}" r:id="rIdPC${i}"/>`).join('')}</pivotCaches>`;
+    if (!/xmlns:r=/.test(wbx.slice(0, 800))) wbx = wbx.replace('<workbook ', `<workbook xmlns:r="${REL}" `);
+    const m = /<(oleSize|customWorkbookViews|smartTagPr|smartTagTypes|webPublishing|fileRecoveryPr|webPublishObjects|extLst)\b|<\/workbook>/.exec(wbx); wbx = wbx.slice(0, m.index) + pc + wbx.slice(m.index);
+    z.file('xl/workbook.xml', wbx); z.file('xl/_rels/workbook.xml.rels', wrel); z.file('[Content_Types].xml', ctx);
+    return z.generateAsync({type: 'arraybuffer', compression: 'DEFLATE'}); }
+  async function readPivots(buf, wb){
+    const z = await JSZip.loadAsync(buf); const P = s => new DOMParser().parseFromString(s, 'application/xml'); const txt = async p => { const f = z.file(p); return f ? f.async('string') : null; };
+    const rels = async p => { const s = await txt(p.replace(/([^\/]+)$/, '_rels/$1.rels')); const m = {}; if (s) for (const r of P(s).getElementsByTagNameNS('*', 'Relationship')) m[r.getAttribute('Id')] = {t: r.getAttribute('Target'), type: r.getAttribute('Type')}; return m; };
+    const join = (base, t) => { if (t.startsWith('/')) return t.slice(1); const p = base.split('/'); p.pop(); for (const s of t.split('/')){ if (s === '..') p.pop(); else if (s !== '.') p.push(s); } return p.join('/'); };
+    if (!Object.keys(z.files).some(f => /^xl\/pivotTables\//.test(f))) return;
+    const wbx = P(await txt('xl/workbook.xml')); const wrels = await rels('xl/workbook.xml'); const RNS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'; const q = (el, n) => el ? [...el.getElementsByTagNameNS('*', n)] : [];
+    for (const s of q(wbx, 'sheet')){ const sh = wb.sheets.find(x => x.name === s.getAttribute('name')); if (!sh) continue; const rid = s.getAttributeNS(RNS, 'id') || s.getAttribute('r:id'); if (!wrels[rid]) continue; const path = join('xl/workbook.xml', wrels[rid].t); const srels = await rels(path);
+      for (const r of Object.values(srels)){ if (!/\/pivotTable$/.test(r.type)) continue; try { const pp = join(path, r.t); const T = P(await txt(pp)); const prels = await rels(pp); const cr = Object.values(prels).find(x => /pivotCacheDefinition$/.test(x.type)); if (!cr) continue; const C = P(await txt(join(pp, cr.t)));
+        const ws = q(C, 'worksheetSource')[0]; if (!ws) continue; let srcSheet, g;
+        if (ws.getAttribute('ref')){ srcSheet = wb.sheets.find(x => x.name === (ws.getAttribute('sheet') || sh.name)); g = parseRange(ws.getAttribute('ref').replace(/\$/g, '')); }
+        else if (ws.getAttribute('name')){ const nm = ws.getAttribute('name'); for (const x of wb.sheets){ const t = (x.tables || []).find(t => t.name === nm); if (t){ srcSheet = x; g = {...t.range, r2: t.range.r2 - (t.total ? 1 : 0)}; break; } } if (!g && wb.names[nm]){ const m = /^=?(?:'((?:[^']|'')+)'|([^!]+))!(.+)$/.exec(wb.names[nm]); if (m){ srcSheet = wb.sheets.find(x => x.name === (m[1] || m[2]).replace(/''/g, "'")); g = parseRange(m[3].replace(/\$/g, '')); } } }
+        if (!srcSheet || !g) continue; const loc = q(T, 'location')[0]; const out = loc && parseRange(loc.getAttribute('ref')); if (!out) continue;
+        const cf = q(C, 'cacheField'); const fx = x => x != null && x >= 0 && x < cf.length && !q(cf[x], 'formula').length && cf[x].getAttribute('formula') == null ? g.c1 + x : null;
+        const field = el => +el.getAttribute('x'); const rowsX = q(q(T, 'rowFields')[0], 'field').map(field).filter(x => x >= 0); const colsX = q(q(T, 'colFields')[0], 'field').map(field).filter(x => x >= 0);
+        const vals = q(T, 'dataField').map(d => ({f: fx(+d.getAttribute('fld')), agg: SUBT_IN[d.getAttribute('subtotal') || 'sum'] || 'Sum', show: SHOW_IN[d.getAttribute('showDataAs')]})).filter(v => v.f != null);
+        let rows = fx(rowsX[0]), rows2 = rowsX.length > 1 ? fx(rowsX[1]) : null, cols = colsX.length ? fx(colsX[0]) : null; if (rows == null){ rows = cols ?? (vals[0] ? vals[0].f : g.c1); cols = null; }
+        if (!vals.length) vals.push({f: rows, agg: 'Count'});
+        // a filter: page field or hidden items on a row/column field
+        let filter = null; const pfs = q(q(T, 'pivotFields')[0], 'pivotField'); const itemText = (f, x) => { const si = q(cf[f], 'sharedItems')[0]; const it = si ? [...si.children][x] : null; if (!it) return null; if (it.localName === 'm') return ''; const v = it.getAttribute('v'); if (it.localName === 'n'){ const st = styleAt(srcSheet, g.r1 + 1, g.c1 + f); return formatValue(+v, (st && st.nf) || 'General').text; } if (it.localName === 'b') return v === '1' ? 'TRUE' : 'FALSE'; return v; };
+        const fWithHidden = pfs.findIndex(p => q(p, 'item').some(i => i.getAttribute('h') === '1')); const pageFld = q(T, 'pageField')[0];
+        const ff = pageFld ? +pageFld.getAttribute('fld') : fWithHidden; if (ff >= 0 && fx(ff) != null){ const items = q(pfs[ff], 'item').filter(i => i.getAttribute('x') != null); let keep = items.filter(i => i.getAttribute('h') !== '1').map(i => itemText(ff, +i.getAttribute('x'))).filter(v => v != null);
+          if (pageFld && pageFld.getAttribute('item') != null && !items.some(i => i.getAttribute('h') === '1')){ const v = itemText(ff, +pageFld.getAttribute('item')); keep = v != null ? [v] : keep; }
+          if (items.length && keep.length < items.length) filter = {f: fx(ff), vals: keep}; }
+        sh.pivots = sh.pivots || []; sh.pivots.push({id: uid(), src: {sheetId: srcSheet.id, g}, rows, rows2, cols, vals: vals.map(v => ({f: v.f, agg: v.agg})), show: vals[0].show || 'val', filter, at: {r: out.r1, c: out.c1}, out, fromFile: true});
+      } catch(e){ console.warn('pivot', e); } } }
+  }
   function parseCSV(text){
     text = text.replace(/^﻿/, ''); const first = text.split(/\r?\n/)[0] || ''; const delim = [',', ';', '\t', '|'].map(d => [d, first.split(d).length]).sort((a, b) => b[1] - a[1])[0][0];
     const rows = []; let row = [], cur = '', q = false;
