@@ -16,7 +16,7 @@ const inRange = (g, r, c) => r >= g.r1 && r <= g.r2 && c >= g.c1 && c <= g.c2;
 const quoteSheet = n => /^[A-Za-z_][A-Za-z0-9_.]*$/.test(n) && !/^[A-Za-z]{1,3}\d+$/.test(n) ? n : `'${n.replace(/'/g, "''")}'`;
 
 /* ---------------------------------------------------------------- errors & values */
-const ERR = {div0: '#DIV/0!', na: '#N/A', name: '#NAME?', nul: '#NULL!', num: '#NUM!', ref: '#REF!', value: '#VALUE!', circ: '#CIRC!', spill: '#SPILL!'};
+const ERR = {div0: '#DIV/0!', na: '#N/A', name: '#NAME?', nul: '#NULL!', num: '#NUM!', ref: '#REF!', value: '#VALUE!', circ: '#CIRC!', spill: '#SPILL!', calc: '#CALC!'};
 class XErr { constructor(e){ this.e = e; } toString(){ return this.e; } }
 const err = e => new XErr(e); const isErr = v => v instanceof XErr;
 const ERR_NAMES = new Set(Object.values(ERR).concat(['#GETTING_DATA']));

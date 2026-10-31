@@ -4,14 +4,14 @@ const App = (() => {
   const $ = (s, r = document) => r.querySelector(s);
   const h = UI.h, toast = UI.toast, dialog = (...a) => UI.dialog(...a);
   const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-  const MIME = {xlsx: XLSX_MIME, csv: 'text/csv', pdf: 'application/pdf'};
+  const MIME = {xlsx: XLSX_MIME, csv: 'text/csv', pdf: 'application/pdf', ods: 'application/vnd.oasis.opendocument.spreadsheet'};
   const FI = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
 
   /* ---------------------------------------------------------------- libraries */
-  const LIBS = Object.assign({exceljs: 'https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js'}, window.SRK_LIBS || {});
+  const LIBS = Object.assign({exceljs: 'https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js', sheetjs: 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'}, window.SRK_LIBS || {});
   const loaded = {};
   function lib(name, test){ if (test()) return Promise.resolve(); return loaded[name] || (loaded[name] = new Promise((res, rej) => { const s = document.createElement('script'); s.src = LIBS[name]; s.onload = () => res(); s.onerror = () => { delete loaded[name]; rej(new Error('Couldn’t load a component. Check your internet connection and try again.')); }; document.head.appendChild(s); })); }
-  const needExcel = () => lib('exceljs', () => window.ExcelJS);
+  const needExcel = () => lib('exceljs', () => window.ExcelJS); const needSheetJS = () => lib('sheetjs', () => window.XLSX && window.XLSX.read);
 
   /* ---------------------------------------------------------------- storage */
   const Store = (() => {
@@ -154,7 +154,7 @@ const App = (() => {
     const T = $('#tpls'); T.innerHTML = ''; if (!tplPreviews) tplPreviews = TEMPLATES.map(t => { try { return previewOf(t[2]()); } catch(e){ console.error(t[0], e); return []; } });
     TEMPLATES.forEach(([n, sub, fn], i) => { const b = h('button', {class: 'tpl', type: 'button'}, h('div', {class: 'mini', html: miniHTML(tplPreviews[i])}), h('b', {}, n), h('small', {}, sub)); b.addEventListener('click', () => { const w = fn(); w.id = uid(); edit(w); dirty(); }); T.append(b); });
     const O = $('#openRow'); O.innerHTML = ''; const lab = h('label', {class: 'btn primary filepick', html: FI('<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>') + '<span>Open Excel or CSV file</span>'});
-    const inp = h('input', {type: 'file', accept: '.xlsx,.xlsm,.xls,.csv,.tsv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv', class: 'fileover'}); inp.addEventListener('change', () => { const f = inp.files[0]; inp.value = ''; if (f) openFile(f); }); lab.append(inp); O.append(lab, h('span', {class: 'hint'}, '.xlsx and .csv files'));
+    const inp = h('input', {type: 'file', accept: '.xlsx,.xlsm,.xls,.xlsb,.ods,.csv,.tsv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv', class: 'fileover'}); inp.addEventListener('change', () => { const f = inp.files[0]; inp.value = ''; if (f) openFile(f); }); lab.append(inp); O.append(lab, h('span', {class: 'hint'}, '.xlsx and .csv files'));
     if (window.claude && !window.SRK_NATIVE) $('#tipBox').hidden = false;
     renderRecent(); }
   async function renderRecent(){ const R = $('#recent'); let list = []; try { list = await Store.list(); } catch(e){} R.innerHTML = ''; if (!list.length){ R.append(h('div', {class: 'empty'}, 'Workbooks you create or open appear here.')); return; }
@@ -165,10 +165,10 @@ const App = (() => {
 
   /* ---------------------------------------------------------------- opening files */
   async function openBytes(buf, name){
-    try { busy('Opening ' + name + '…'); let book;
+    let later = ''; try { busy('Opening ' + name + '…'); let book;
       if (/\.(csv|tsv|txt)$/i.test(name)){ let text = new TextDecoder('utf-8').decode(buf); if (/\.tsv$/i.test(name) || (!text.includes(',') && text.includes('\t'))) text = text.split('\n').map(l => l.split('\t').map(v => /[",]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v).join(',')).join('\n'); book = XIO.readCSV(text.replace(/^﻿/, ''), name.replace(/\.\w+$/, '')); }
-      else { if (/\.xls$/i.test(name)) throw new Error('This is an old Excel 97–2003 file (.xls). Open it in Excel or Google Sheets and save it as .xlsx, then open it here.'); await needExcel(); book = await XIO.readXlsx(buf, name.replace(/\.\w+$/, '')); }
-      unbusy(); book.id = uid(); book.updated = Date.now(); edit(book); dirty();
+      else { await needExcel(); if (/\.(xls|ods|xlsb|fods|numbers)$/i.test(name)){ await needSheetJS(); let X; try { X = XLSX.read(new Uint8Array(buf), {type: 'array', cellFormula: true, cellDates: false, cellNF: true}); } catch(e){ throw new Error('Couldn’t read that file. It may be damaged or password-protected.'); } buf = XLSX.write(X, {bookType: 'xlsx', type: 'array'}); later = 'Opened. Older file types keep values and formulas; some formatting may be simpler.'; } book = await XIO.readXlsx(buf, name.replace(/\.\w+$/, '')); }
+      unbusy(); book.id = uid(); book.updated = Date.now(); edit(book); dirty(); if (later) toast(later, 4500);
     } catch(e){ unbusy(); console.error(e); toast(e.message || 'Couldn’t open that file.', 5000); } }
   async function openFile(file){ if (!file) return; if (/\.pdf$/i.test(file.name)){ toast('That’s a PDF. SRK Sheets opens Excel (.xlsx) and CSV files.', 4000); return; } openBytes(await file.arrayBuffer(), file.name); }
   window.srkOpenIncoming = async name => { try { const r = await fetch('/incoming/file'); if (!r.ok) throw 0; if (wb) await persist(); openBytes(await r.arrayBuffer(), name || 'Workbook.xlsx'); } catch(e){ toast('Couldn’t open the file you shared.', 4000); } };
@@ -177,29 +177,46 @@ const App = (() => {
   /* ---------------------------------------------------------------- saving */
   async function makeXlsx(){ if (Grid.G.edit) Grid.commitEdit(); await needExcel(); return XIO.writeXlsx(wb); }
   async function saveXlsx(share){ try { busy('Preparing Excel file…'); const b = await makeXlsx(); unbusy(); const blob = new Blob([b], {type: XLSX_MIME}); const n = cleanName(wb.name, 'xlsx'); if (share) await shareFile(blob, n); else await saveFile(blob, n); } catch(e){ unbusy(); console.error(e); toast(e.message || 'Couldn’t save.', 4500); } }
+  async function saveOds(share){ try { busy('Preparing OpenDocument file…'); const b = await makeXlsx(); await needSheetJS(); const X = XLSX.read(new Uint8Array(b), {type: 'array', cellFormula: true, cellStyles: true}); const out = XLSX.write(X, {bookType: 'ods', type: 'array'}); unbusy(); const blob = new Blob([out], {type: MIME.ods}); const n = cleanName(wb.name, 'ods'); if (share) await shareFile(blob, n); else await saveFile(blob, n); } catch(e){ unbusy(); console.error(e); toast(e.message || 'Couldn’t save.', 4500); } }
   async function saveCsv(share){ if (Grid.G.edit) Grid.commitEdit(); const s = Grid.G.sh; const blob = new Blob(['﻿' + XIO.writeCSV(s)], {type: 'text/csv'}); const n = cleanName(wb.sheets.length > 1 ? `${wb.name} - ${s.name}` : wb.name, 'csv'); if (share) await shareFile(blob, n); else await saveFile(blob, n); }
 
   /* ---------------------------------------------------------------- PDF (pages drawn on a canvas) */
   const PAGE = {A4: [595.28, 841.89], Letter: [612, 792]};
   const BW = {thin: 0.75, hair: 0.4, dotted: 0.75, dashed: 0.75, medium: 1.5, thick: 2.25, double: 2.2, mediumDashed: 1.5};
+  const MARG = {normal: 54, narrow: 36, wide: 72};
+  const titleRows = (s, g) => { const t = (s.page || {}).titles; const m = t && /^(\d+)(?::(\d+))?$/.exec(t); if (!m) return null; const a = +m[1] - 1, b = (+(m[2] || m[1])) - 1; return {a: Math.min(a, b), b: Math.max(a, b)}; };
   function sheetPages(s){
     const pg = s.page || {}; let g = pg.area; const {R, C} = Calc.lastRC(s);
-    if (!g){ let r2 = R, c2 = C; for (const o of [...s.charts, ...s.images]){ const e = objEnd(s, o); r2 = Math.max(r2, e.r); c2 = Math.max(c2, e.c); } g = {r1: 0, c1: 0, r2, c2}; }
-    if (!Object.keys(s.cells).length && !s.charts.length && !s.images.length) return [];
+    if (!g){ let r2 = R, c2 = C; for (const o of [...s.charts, ...s.images, ...(s.shapes || [])]){ const e = objEnd(s, o); r2 = Math.max(r2, e.r); c2 = Math.max(c2, e.c); } g = {r1: 0, c1: 0, r2, c2}; }
+    if (!Object.keys(s.cells).length && !s.charts.length && !s.images.length && !(s.shapes || []).length) return [];
     const cw = c => s.hidC[c] ? 0 : (s.colW[c] ?? DEF_W), rh = r => s.hidR[r] ? 0 : (s.rowH[r] ?? DEF_H);
-    const [PW0, PH0] = PAGE[pg.size] || PAGE.A4; const land = pg.orient === 'landscape'; const PW = land ? PH0 : PW0, PH = land ? PW0 : PH0; const M = 36;
+    const [PW0, PH0] = PAGE[pg.size] || PAGE.A4; const land = pg.orient === 'landscape'; const PW = land ? PH0 : PW0, PH = land ? PW0 : PH0; const M = MARG[pg.margins] || MARG.normal;
+    const HF = (pg.header ? 14 : 0) + 14; // room for header and footer text
     let totalW = 0; for (let c = g.c1; c <= g.c2; c++) totalW += cw(c);
-    const k0 = 0.75; const k = pg.fit === 'none' ? k0 : Math.min(k0, (PW - 2 * M) / Math.max(1, totalW)); const aw = (PW - 2 * M) / k, ah = (PH - 2 * M) / k;
+    const k0 = 0.75; const k = pg.fit === 'none' ? k0 : Math.min(k0, (PW - 2 * M) / Math.max(1, totalW)); const aw = (PW - 2 * M) / k, ah0 = (PH - 2 * M - HF) / k;
+    const tr = titleRows(s, g); let th = 0; if (tr) for (let r = tr.a; r <= tr.b; r++) th += rh(r);
     const colChunks = []; let cur = [g.c1, g.c1], w = 0; for (let c = g.c1; c <= g.c2; c++){ if (w + cw(c) > aw + 0.5 && c > cur[0]){ colChunks.push(cur); cur = [c, c]; w = 0; } w += cw(c); cur[1] = c; } colChunks.push(cur);
-    const rowChunks = []; let rc = [g.r1, g.r1], hh = 0; for (let r = g.r1; r <= g.r2; r++){ if (hh + rh(r) > ah + 0.5 && r > rc[0]){ rowChunks.push(rc); rc = [r, r]; hh = 0; } hh += rh(r); rc[1] = r; } rowChunks.push(rc);
-    const pages = []; for (const [c1, c2] of colChunks) for (const [r1, r2] of rowChunks) pages.push({s, g: {r1, c1, r2, c2}, PW, PH, M, k, cw, rh}); return pages; }
+    const rowChunks = []; let rc = [g.r1, g.r1], hh = 0; const room = r0 => ah0 - (tr && r0 > tr.b ? th : 0);
+    for (let r = g.r1; r <= g.r2; r++){ if (hh + rh(r) > room(rc[0]) + 0.5 && r > rc[0]){ rowChunks.push(rc); rc = [r, r]; hh = 0; } hh += rh(r); rc[1] = r; } rowChunks.push(rc);
+    const pages = []; for (const [c1, c2] of colChunks) for (const [r1, r2] of rowChunks) pages.push({s, g: {r1, c1, r2, c2}, PW, PH, M, k, cw, rh, tr: tr && r1 > tr.b ? tr : null, HF}); return pages; }
   function objEnd(s, o){ let c = o.c, x = (o.dx || 0) + o.w; while (c < 16000 && x > (s.colW[c] ?? DEF_W)){ x -= s.colW[c] ?? DEF_W; c++; } let r = o.r, y = (o.dy || 0) + o.h; while (r < 1e6 && y > (s.rowH[r] ?? DEF_H)){ y -= s.rowH[r] ?? DEF_H; r++; } return {r, c}; }
   const svgImg = svg => new Promise(res => { const im = new Image(); im.onload = () => res(im); im.onerror = () => res(null); im.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg.includes('xmlns=') ? svg : svg.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"')); });
   const srcImg = src => new Promise(res => { const im = new Image(); im.onload = () => res(im); im.onerror = () => res(null); im.src = src; });
   async function drawPage(p, num, total){
     const D = 2.2; const cv = document.createElement('canvas'); cv.width = Math.round(p.PW * D); cv.height = Math.round(p.PH * D); const x = cv.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, cv.width, cv.height);
-    const {s, g, M, k, cw, rh} = p; const pg = s.page || {}; x.scale(D, D); x.translate(M, M); x.scale(k, k);
-    const L = {}, T = {}; let acc = 0; for (let c = g.c1; c <= g.c2 + 1; c++){ L[c] = acc; if (c <= g.c2) acc += cw(c); } const W = acc; acc = 0; for (let r = g.r1; r <= g.r2 + 1; r++){ T[r] = acc; if (r <= g.r2) acc += rh(r); } const H = acc;
+    const {s, g, M, k, cw} = p; const pg = s.page || {}; let W0 = 0; for (let c = g.c1; c <= g.c2; c++) W0 += cw(c);
+    const offX = pg.center ? Math.max(0, (p.PW - 2 * M - W0 * k) / 2) : 0; const top = M + (pg.header ? 14 : 0);
+    x.scale(D, D); x.translate(M + offX, top); x.scale(k, k);
+    if (p.tr){ const th = await drawRegion(x, p, {r1: p.tr.a, c1: g.c1, r2: p.tr.b, c2: g.c2}, false); x.translate(0, th); }
+    await drawRegion(x, p, g, true);
+    x.setTransform(D, 0, 0, D, 0, 0); x.fillStyle = '#595959'; x.font = `8px ${fontCss()}`; x.textAlign = 'center';
+    const codes = t => String(t || '').replace(/&\[Page\]/gi, num).replace(/&\[Pages\]/gi, total).replace(/&\[Date\]/gi, new Date().toLocaleDateString()).replace(/&\[Time\]/gi, new Date().toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'})).replace(/&\[Sheet\]/gi, s.name).replace(/&\[File\]/gi, wb.name);
+    if (pg.header) x.fillText(codes(pg.header), p.PW / 2, M - 4);
+    const foot = pg.footer != null && pg.footer !== '' ? codes(pg.footer) : total > 1 ? `${s.name} — page ${num} of ${total}` : ''; if (foot) x.fillText(foot, p.PW / 2, p.PH - M / 2);
+    return cv; }
+  async function drawRegion(x, p, g, withObj){
+    const {s, cw, rh} = p; const pg = s.page || {};
+    const L = {}, T = {}; let acc = 0; for (let c = g.c1; c <= g.c2 + 1; c++){ L[c] = acc; if (c <= g.c2) acc += cw(c); } const W = acc; acc = 0; for (let r = g.r1; r <= g.r2 + 1; r++){ T[r] = acc; if (r <= g.r2) acc += rh(r); } const H = acc; if (!withObj) T.__ = 0;
     const colX = c => c < g.c1 ? L[g.c1] - [...Array(g.c1 - c)].reduce((a, _, i) => a + cw(g.c1 - 1 - i), 0) : c > g.c2 + 1 ? W + [...Array(c - g.c2 - 1)].reduce((a, _, i) => a + cw(g.c2 + 1 + i), 0) : L[c];
     const rowY = r => r < g.r1 ? T[g.r1] - [...Array(g.r1 - r)].reduce((a, _, i) => a + rh(g.r1 - 1 - i), 0) : r > g.r2 + 1 ? H + [...Array(r - g.r2 - 1)].reduce((a, _, i) => a + rh(g.r2 + 1 + i), 0) : T[r];
     x.save(); x.beginPath(); x.rect(0, 0, W, H); x.clip();
@@ -212,25 +229,25 @@ const App = (() => {
       const fill = (cf && cf.fill) || st.fill || (ts && ts.fill); if (fill){ x.fillStyle = fill; x.fillRect(bx.x, bx.y, bx.w, bx.h); }
       if (cf && cf.bar){ x.fillStyle = cf.bar.color + 'aa'; x.fillRect(bx.x + 1, bx.y + 2, (bx.w - 2) * cf.bar.pct, bx.h - 4); }
       if (st.bd) borders.push([bx, st.bd]); if (ts && ts.bdT) borders.push([bx, {t: {style: 'double', color: ts.bdT}}]);
-      if (!cell) continue; const d = displayAt(s, rr, cc); if (!d.text) continue; const v = valueAt(s, rr, cc);
-      texts.push({bx, d, v, st, color: (cf && cf.color) || d.color || st.color || (ts && ts.color) || (s.links[key(rr, cc)] ? '#0563C1' : '#000'), b: st.b || (cf && cf.b) || (ts && ts.b), r: rr, c: cc, m}); } }
+      if (!cell && Calc.spilledValue(s, rr, cc) === undefined) continue; const d = displayAt(s, rr, cc); if (!d.text) continue; const v = valueAt(s, rr, cc);
+      texts.push({bx, d, v, st, color: (cf && cf.color) || d.color || st.color || (ts && ts.color) || (s.links[key(rr, cc)] ? '#0563C1' : '#000'), b: st.b || (cf && cf.b) || (ts && ts.b), r: rr, c: cc, m, icon: cf && cf.icon}); } }
     for (const t of texts){ const {bx, st} = t; const size = (st.size || 11) * 4 / 3; x.font = `${st.i ? 'italic ' : ''}${t.b ? '700 ' : ''}${size}px ${fontCss(st.font)}`; x.fillStyle = t.color; x.textBaseline = 'alphabetic';
       let align = st.ha && st.ha !== 'general' ? st.ha : t.d.align || (typeof t.v === 'number' ? 'right' : 'left'); let text = t.d.text; const pad = 3 + (st.ind || 0) * 9;
       const lines = st.wrap ? wrapLines(x, text, bx.w - 6) : text.split('\n').slice(0, 1); if (!st.wrap && typeof t.v === 'number' && x.measureText(text).width > bx.w - 4) { text = '#'.repeat(Math.max(1, Math.floor((bx.w - 4) / x.measureText('#').width))); lines[0] = text; }
       let clipX = bx.x, clipW = bx.w; if (!st.wrap && !t.m && typeof t.v !== 'number' && align === 'left'){ const tw = x.measureText(text).width + pad + 3; let c2 = t.c + 1; while (clipW < tw && c2 <= g.c2 && !cellAt(s, t.r, c2)){ clipW += cw(c2); c2++; } }
       const lh = size * 1.22; const block = lines.length * lh; const va = st.va || 'bottom'; let y0 = va === 'top' ? bx.y + 2 + size : va === 'middle' ? bx.y + (bx.h - block) / 2 + size * 0.95 : bx.y + bx.h - block - 2 + size * 0.98;
       x.save(); x.beginPath(); x.rect(clipX, bx.y, clipW, bx.h); x.clip();
+      if (t.icon){ const f0 = x.font, c0 = x.fillStyle; x.font = `${size * 0.9}px ${fontCss()}`; x.fillStyle = t.icon[1]; x.fillText(t.icon[0], bx.x + 2, y0 + (lines.length - 1) * lh); x.font = f0; x.fillStyle = c0; }
       lines.forEach((ln, i) => { const tw = x.measureText(ln).width; const tx0 = align === 'center' ? bx.x + (bx.w - tw) / 2 : align === 'right' ? bx.x + bx.w - pad - tw : bx.x + pad; const yy = y0 + i * lh; x.fillText(ln, tx0, yy);
         if (st.u || s.links[key(t.r, t.c)]){ x.fillRect(tx0, yy + 1.5, tw, 0.8); } if (st.s){ x.fillRect(tx0, yy - size * 0.3, tw, 0.8); } });
       x.restore(); }
     for (const [bx, bd] of borders) for (const [side, e] of Object.entries(bd)){ if (!e) continue; x.strokeStyle = e.color || '#000'; x.lineWidth = (BW[e.style] || 0.75) / 0.75; x.setLineDash(/dash/.test(e.style) ? [4, 3] : e.style === 'dotted' ? [1, 2] : []); x.beginPath();
       const X1 = bx.x, X2 = bx.x + bx.w, Y1 = bx.y, Y2 = bx.y + bx.h; if (side === 't'){ x.moveTo(X1, Y1); x.lineTo(X2, Y1); } if (side === 'b'){ x.moveTo(X1, Y2); x.lineTo(X2, Y2); } if (side === 'l'){ x.moveTo(X1, Y1); x.lineTo(X1, Y2); } if (side === 'r'){ x.moveTo(X2, Y1); x.lineTo(X2, Y2); } x.stroke();
       if (e.style === 'double' && (side === 't' || side === 'b')){ x.lineWidth = 0.8; x.beginPath(); const yy = side === 'b' ? Y2 - 2.5 : Y1 + 2.5; x.moveTo(X1, yy); x.lineTo(X2, yy); x.stroke(); } x.setLineDash([]); }
-    for (const o of [...s.images, ...s.charts]){ const ox = colX(o.c) + (o.dx || 0), oy = rowY(o.r) + (o.dy || 0); if (ox > W || oy > H || ox + o.w < 0 || oy + o.h < 0) continue;
-      const im = o.chart ? await svgImg(chartSvg({...o, data: chartData(s, o), fontSize: 11, colors: o.colors || XL_COLORS}, CHART_TH)) : await srcImg(Objects.mediaOf(o.src)); if (im) x.drawImage(im, ox, oy, o.w, o.h); }
-    x.restore();
-    x.setTransform(D, 0, 0, D, 0, 0); if (total > 1){ x.fillStyle = '#7F7F7F'; x.font = `8px ${fontCss()}`; x.textAlign = 'center'; x.fillText(`${s.name} — page ${num} of ${total}`, p.PW / 2, p.PH - 16); }
-    return cv; }
+    for (const sp of (s.sparks || [])){ if (sp.r < g.r1 || sp.r > g.r2 || sp.c < g.c1 || sp.c > g.c2 || !rh(sp.r) || !cw(sp.c)) continue; const svg = More.sparkSvg(More.sparkVals(s, sp), sp.type, sp.color, cw(sp.c), rh(sp.r)); if (!svg) continue; const im = await svgImg(svg); if (im) x.drawImage(im, L[sp.c], T[sp.r], cw(sp.c), rh(sp.r)); }
+    if (withObj) for (const o of [...s.images, ...(s.shapes || []), ...s.charts]){ const ox = colX(o.c) + (o.dx || 0), oy = rowY(o.r) + (o.dy || 0); if (ox > W || oy > H || ox + o.w < 0 || oy + o.h < 0) continue;
+      const im = o.shape ? await svgImg(More.shapeSvg(o, o.w, o.h)) : o.chart ? await svgImg(chartSvg({...o, data: chartData(s, o), fontSize: 11, colors: o.colors || XL_COLORS}, CHART_TH)) : await srcImg(Objects.mediaOf(o.src)); if (im) x.drawImage(im, ox, oy, o.w, o.h); }
+    x.restore(); return H; }
   function wrapLines(x, text, w){ const out = []; for (const para of text.split('\n')){ let line = ''; for (const word of para.split(/(\s+)/)){ const t = line + word; if (x.measureText(t).width > w && line.trim()){ out.push(line.trimEnd()); line = word.trimStart(); } else line = t; } out.push(line); } return out; }
   async function makePdf(which){ const sheets = which === 'all' ? wb.sheets.filter(s => !s.hiddenSheet) : [Grid.G.sh]; const pages = sheets.flatMap(sheetPages); if (!pages.length) throw new Error('There’s nothing to print on ' + (which === 'all' ? 'these sheets' : 'this sheet') + ' yet.');
     if (pages.length > 300) throw new Error(`That would be ${pages.length} pages. Set a print area (Page Layout › Print Area) first.`);
@@ -250,13 +267,14 @@ const App = (() => {
   function fileMenu(){ if (Grid.G.edit) Grid.commitEdit(); UI.closePop(); const close = () => m.remove();
     const item = (icon, label, sub, fn) => h('button', {class: 'fm-item', type: 'button', onclick: () => { close(); fn(); }, html: FI(icon) + `<span>${label}<small>${sub}</small></span>`});
     const openItem = h('label', {class: 'fm-item filepick', html: FI('<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>') + '<span>Open<small>An Excel (.xlsx) or CSV file from your phone</small></span>'});
-    const oi = h('input', {type: 'file', accept: '.xlsx,.xlsm,.xls,.csv,.tsv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv', class: 'fileover'}); oi.addEventListener('change', async () => { const f = oi.files[0]; close(); if (f){ await persist(); openFile(f); } }); openItem.append(oi);
+    const oi = h('input', {type: 'file', accept: '.xlsx,.xlsm,.xls,.xlsb,.ods,.csv,.tsv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv', class: 'fileover'}); oi.addEventListener('change', async () => { const f = oi.files[0]; close(); if (f){ await persist(); openFile(f); } }); openItem.append(oi);
     const share = '<circle cx="18" cy="5.5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="18.5" r="2.5"/><path d="M8.2 10.8l7.6-4M8.2 13.2l7.6 4"/>';
     const m = h('div', {class: 'filemenu', role: 'dialog', 'aria-label': 'File'},
       h('header', {class: 'bar gut'}, h('button', {class: 'ib', type: 'button', 'aria-label': 'Close', onclick: close, html: FI('<path d="M15 18l-6-6 6-6"/>')}), h('b', {style: 'font-size:17px;padding-left:4px'}, 'File')),
       h('div', {class: 'fm-scroll gut'}, h('div', {class: 'fm-wrap'},
         item('<path d="M12 5v14M5 12h14"/>', 'New', 'Blank workbook or a template', () => goHome()), openItem, h('div', {class: 'fm-sep'}),
         item('<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>', 'Save as Excel', 'An .xlsx file that opens in Excel and Google Sheets', () => saveXlsx(false)),
+        item('<path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5"/>', 'Save as OpenDocument (.ods)', 'For LibreOffice and other spreadsheet apps', () => saveOds(false)),
         item('<path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5M9 13h6M9 17h6"/>', 'Save this sheet as CSV', 'Plain values, for other apps', () => saveCsv(false)),
         item('<path d="M6 9V3h12v6M6 17H4a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-2"/><rect x="6" y="14" width="12" height="7"/>', 'Print / save as PDF', 'Pages for printing or sending', printPdf), h('div', {class: 'fm-sep'}),
         item(share, 'Share as Excel', 'Send to WhatsApp, Gmail or Drive', () => saveXlsx(true)), item(share, 'Share as PDF', 'Send the sheet as PDF pages', printPdf), item(share, 'Share as CSV', 'Send this sheet’s values', () => saveCsv(true)), h('div', {class: 'fm-sep'}),

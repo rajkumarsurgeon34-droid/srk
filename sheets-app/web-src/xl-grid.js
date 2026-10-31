@@ -50,7 +50,7 @@ const Grid = (() => {
         if (m){ const k = m.r1 + ',' + m.c1; if (done.has(k)) continue; done.add(k); }
         const rr = m ? m.r1 : r, cc = m ? m.c1 : c; const bx = cellBox(rr, cc); if (!bx.w || !bx.h) continue;
         const x = cellAt(s, rr, cc); const st = x && x.s || {}; const tst = s.tables.length ? tableStyleAt(s, rr, cc) : null; const cf = s.cf.length ? cfStyleFor(s, rr, cc, cfCache) : null;
-        const d = x ? displayAt(s, rr, cc, G.showF) : {text: ''};
+        const d = displayAt(s, rr, cc, G.showF);
         let fill = (cf && cf.fill) || st.fill || (tst && tst.fill) || (opaque ? 'var(--cellbg)' : null); let color = (cf && cf.color) || d.color || st.color || (tst && tst.color) || null;
         const bold = (cf && cf.b) || st.b || (tst && tst.b), ital = st.i || (cf && cf.i);
         const size = (st.size || 11) * 4 / 3 * z(); const font = `${ital ? 'italic ' : ''}${bold ? '700 ' : ''}${size.toFixed(1)}px ${fontCss(st.font)}`;
@@ -62,11 +62,11 @@ const Grid = (() => {
         if (fill) css.push(`background:${fill}`);
         if (cf && cf.bar) css.push(`background:linear-gradient(90deg,${cf.bar.color}aa ${Math.round(cf.bar.pct * 100)}%,${fill || 'transparent'} ${Math.round(cf.bar.pct * 100)}%)`);
         out.push(`<div class="c${st.wrap ? ' wr' : ''}" data-r="${rr}" data-c="${cc}" style="${css.join(';')}"></div>`);
-        if (text || (x && (s.notes[key(rr, cc)]))){
+        const cmt = s.comments && s.comments[key(rr, cc)]; if (text || s.notes[key(rr, cc)] || cmt){
           const tcss = [`left:${ox + left}px;top:${oy + bx.y}px;width:${w}px;height:${bx.h}px;font:${font};text-align:${align};justify-content:${({top: 'flex-start', middle: 'center', center: 'center', bottom: 'flex-end'})[st.va || 'bottom']}`];
           if (color) tcss.push(`color:${color}`); if (st.u || s.links[key(rr, cc)]) tcss.push('text-decoration:underline'); if (st.s) tcss.push('text-decoration:line-through'); if (s.links[key(rr, cc)] && !color) tcss.push('color:#0563C1');
           if (st.ind) tcss.push(`padding-${align === 'right' ? 'right' : 'left'}:${3 + st.ind * 9 * z()}px`); if (spill) tcss.push('z-index:1');
-          over.push(`<div class="t${st.wrap ? ' wr' : ''}" style="${tcss.join(';')}"><span>${esc(text)}</span>${s.notes[key(rr, cc)] ? '<i class="note"></i>' : ''}</div>`);
+          over.push(`<div class="t${st.wrap ? ' wr' : ''}" style="${tcss.join(';')}">${cf && cf.icon ? `<b class="cfi" style="color:${cf.icon[1]}">${cf.icon[0]}</b>` : ''}<span>${esc(text)}</span>${s.notes[key(rr, cc)] ? '<i class="note"></i>' : ''}${cmt ? '<i class="cmt"></i>' : ''}</div>`);
         }
         const bd = st.bd; const tb = tst && tst.bdT;
         if (bd || tb){ const b = []; for (const [side, prop] of [['t', 'top'], ['b', 'bottom'], ['l', 'left'], ['r', 'right']]){ const e = bd && bd[side]; if (e) b.push(`border-${prop}:${BORDER[e.style] || BORDER.thin} ${e.color || '#000'}`); } if (tb) b.push(`border-top:2px double ${tb}`); borders.push(`<div class="bd" style="left:${ox + bx.x - 1}px;top:${oy + bx.y - 1}px;width:${bx.w + 1}px;height:${bx.h + 1}px;${b.join(';')}"></div>`); }
@@ -78,18 +78,20 @@ const Grid = (() => {
     return out.join('') + over.join('') + borders.join('') + btns.join('');
     function mergeHere(r){ return s.merges.some(m => r >= m.r1 && r <= m.r2); }
   }
+  function olHTML(o, hid, i, rows){ if (!o) return ''; let h = ''; if (o[i]) h += `<i class="ol" style="--lv:${o[i]}"></i>`; if (o[i - 1] && !o[i]){ let a = i - 1; while (a > 0 && o[a - 1]) a--; const shut = !!hid[i - 1]; h += `<b class="olb" data-ol="${rows ? 'r' : 'c'}:${i - 1}" title="${shut ? 'Show' : 'Hide'} detail">${shut ? '+' : '−'}</b>`; } return h; }
   function headersHTML(r0, r1, c0, c1, which){
     const s = G.sh; const g = G.sel.g; const out = [];
     if (which !== 'rows') for (let c = c0; c <= c1; c++){ const w = colLeft[c + 1] - colLeft[c]; if (!w) { if (c > 0 && s.hidC[c]) out.push(`<div class="hid-c" style="left:${hw() + colLeft[c] - 2}px"></div>`); continue; } const on = c >= g.c1 && c <= g.c2, full = on && g.r1 === 0 && g.r2 >= MAXR - 1;
-      out.push(`<div class="ch${on ? ' on' : ''}${full ? ' full' : ''}" data-c="${c}" style="left:${hw() + colLeft[c]}px;width:${w}px;height:${hh()}px">${colName(c)}<i class="rs" data-rc="${c}"></i></div>`); }
+      out.push(`<div class="ch${on ? ' on' : ''}${full ? ' full' : ''}" data-c="${c}" style="left:${hw() + colLeft[c]}px;width:${w}px;height:${hh()}px">${colName(c)}<i class="rs" data-rc="${c}"></i>${olHTML(s.outC, s.hidC, c)}</div>`); }
     if (which !== 'cols') for (let r = r0; r <= r1; r++){ const H = rowTop[r + 1] - rowTop[r]; if (!H) continue; const on = r >= g.r1 && r <= g.r2, full = on && g.c1 === 0 && g.c2 >= MAXC - 1;
-      out.push(`<div class="rh${on ? ' on' : ''}${full ? ' full' : ''}" data-r="${r}" style="top:${hh() + rowTop[r]}px;height:${H}px;width:${hw()}px">${r + 1}<i class="rs" data-rr="${r}"></i></div>`); }
+      out.push(`<div class="rh${on ? ' on' : ''}${full ? ' full' : ''}" data-r="${r}" style="top:${hh() + rowTop[r]}px;height:${H}px;width:${hw()}px">${r + 1}<i class="rs" data-rr="${r}"></i>${olHTML(s.outR, s.hidR, r, true)}</div>`); }
     return out.join('');
   }
   function selHTML(lim){ // selection rectangle + active cell, clipped to a layer's rows/cols
     const s = G.sh, g = G.sel.g; const ox = hw(), oy = hh(); const r2 = Math.min(g.r2, NR - 1), c2 = Math.min(g.c2, NC - 1);
     const x1 = colLeft[g.c1], y1 = rowTop[g.r1], x2 = colLeft[c2 + 1], y2 = rowTop[r2 + 1]; const ab = cellBox(G.sel.r, G.sel.c);
     let h = `<div class="selr" style="left:${ox + x1}px;top:${oy + y1}px;width:${x2 - x1}px;height:${y2 - y1}px"></div><div class="selc" style="left:${ox + ab.x}px;top:${oy + ab.y}px;width:${ab.w}px;height:${ab.h}px"></div>`;
+    const sp = Calc.spillInfo(s, G.sel.r, G.sel.c); if (sp){ const sx = colLeft[sp.c], sy = rowTop[sp.r], ex = colLeft[Math.min(sp.c + sp.cols, NC)], ey = rowTop[Math.min(sp.r + sp.rows, NR)]; if (ex != null && ey != null) h += `<div class="spillb" style="left:${ox + sx}px;top:${oy + sy}px;width:${ex - sx}px;height:${ey - sy}px"></div>`; }
     if (!G.edit){ const touch = matchMedia('(pointer:coarse)').matches;
       if (touch){ h += `<div class="hdlT" data-h="tl" style="left:${ox + x1}px;top:${oy + y1}px"></div><div class="hdlT${G.fill ? ' fill' : ''}" data-h="br" style="left:${ox + x2}px;top:${oy + y2}px"></div>`; }
       else h += `<div class="fillh" style="left:${ox + x2 - 4}px;top:${oy + y2 - 4}px"></div>`; }
@@ -138,8 +140,8 @@ const Grid = (() => {
   /* ---------------------------------------------------------------- editing */
   function startEdit(initial, mode){
     if (G.edit) return; const {r, c} = G.sel; const s = G.sh;
-    const ed = $('#cellEd'); const txt = initial != null ? initial : editText(s, r, c);
-    G.edit = {r, c, sheetId: s.id, mode: mode || (initial != null ? 'enter' : 'edit'), orig: editText(s, r, c)};
+    const ed = $('#cellEd'); const own = cellAt(s, r, c); const spilled = !(own && (own.f != null || own.v != null)) && Calc.spillInfo(s, r, c); const txt = initial != null ? initial : spilled ? '' : editText(s, r, c);
+    G.edit = {r, c, sheetId: s.id, mode: mode || (initial != null ? 'enter' : 'edit'), orig: spilled ? '' : editText(s, r, c)};
     ed.value = txt; ed.hidden = false; const st = styleAt(s, r, c) || {}; ed.style.font = `${st.i ? 'italic ' : ''}${st.b ? '700 ' : ''}${((st.size || 11) * 4 / 3 * z()).toFixed(1)}px ${fontCss(st.font)}`; ed.style.textAlign = st.ha === 'center' ? 'center' : st.ha === 'right' ? 'right' : 'left';
     placeEditor(); ed.focus({preventScroll: true}); const L = ed.value.length; ed.setSelectionRange(L, L); $('#fbar').value = ed.value; syncRefs(); draw(); if (G.onEdit) G.onEdit(true);
   }
@@ -149,9 +151,9 @@ const Grid = (() => {
     const meas = measure(ed.value || ' ', ed.style.font) + 16; ed.style.width = Math.min(Math.max(bx.w, meas), v.clientWidth - x + v.getBoundingClientRect().left - wrap.getBoundingClientRect().left - 4) + 'px';
     ed.style.height = 'auto'; ed.style.height = Math.max(bx.h, ed.scrollHeight) + 'px'; }
   function commitEdit(move){
-    if (!G.edit) return; const ed = $('#cellEd'); const val = (document.activeElement === $('#fbar') ? $('#fbar').value : ed.value); const {r, c} = G.edit; const s = G.sh;
+    if (!G.edit) return; const ed = $('#cellEd'); const val = (document.activeElement === $('#fbar') ? $('#fbar').value : ed.value); const {r, c, orig} = G.edit; const s = G.sh;
     G.edit = null; ed.hidden = true; ed.blur(); if (G.onEdit) G.onEdit(false);
-    if (val !== editText(s, r, c)){
+    if (val !== orig){
       const dv = dvAt(r, c); if (dv && !dvValid(dv, val)){ G.edit = null; draw(); if (G.onInvalid) G.onInvalid(dv, r, c, val); return; }
       tx(s, 'Typing', () => { inputCell(s, r, c, val); autoFitRowIfWrap(r); });
       if (G.onChange) G.onChange();
@@ -193,6 +195,7 @@ const Grid = (() => {
   let drag = null;
   function onDown(e){
     if (e.button > 0) return; const t = e.target;
+    if (t.closest('.olb')){ e.preventDefault(); e.stopPropagation(); const [ax, i] = t.closest('.olb').dataset.ol.split(':'); if (G.onOutline) G.onOutline(ax, +i); return; }
     if (t.closest('.fbtn')){ e.preventDefault(); if (G.onFilterBtn) G.onFilterBtn(+t.closest('.fbtn').dataset.fc, t.closest('.fbtn')); return; }
     if (t.closest('.dvbtn')){ e.preventDefault(); if (G.onDvBtn) G.onDvBtn(t.closest('.dvbtn')); return; }
     if (t.closest('.obj')){ Objects.down(e); return; }
@@ -231,16 +234,16 @@ const Grid = (() => {
   function onUp(e){
     clearInterval(auto); if (!drag) return; const d = drag; drag = null; G.drag = null;
     if (d.mode === 'tap'){ clearTimeout(d.lp); const q = cellFromClient(e.clientX, e.clientY); if (G.edit && canPoint()){ insertRef({r1: q.r, c1: q.c, r2: q.r, c2: q.c}, G.sh); return; }
-      if (d.wasSel && Date.now() - d.t < 450){ if (G.onTapSelected) G.onTapSelected(e.clientX, e.clientY); else startEdit(); return; } if (G.edit) commitEdit(); select(q.r, q.c); if (G.onTapCell) G.onTapCell(q.r, q.c); return; }
+      if (d.wasSel && Date.now() - d.t < 450){ if (G.onTapSelected) G.onTapSelected(e.clientX, e.clientY); else Grid.startEdit(); return; } if (G.edit) commitEdit(); select(q.r, q.c); if (G.onTapCell) G.onTapCell(q.r, q.c); return; }
     if (d.mode === 'colsize' || d.mode === 'rowsize'){ const s = G.sh; if (d.n == null) return; tx(s, 'Size', () => { const idx = d.multi ? (d.mode === 'colsize' ? range(G.sel.g.c1, G.sel.g.c2) : range(G.sel.g.r1, G.sel.g.r2)) : [d.i]; for (const i of idx){ if (d.mode === 'colsize') s.colW[i] = d.n; else s.rowH[i] = d.n; } }, true); geoDirty = true; draw(); if (G.onChange) G.onChange(); return; }
     if (d.mode === 'fill' && d.to){ const s = G.sh; const a = d.anchor, t = d.to; if (t.r1 < a.r1 || t.r2 > a.r2 || t.c1 < a.c1 || t.c2 > a.c2){ tx(s, 'Fill', () => fillSeries(s, a, t)); G.sel.g = t; G.fill = false; geoDirty = true; draw(); if (G.onChange) G.onChange(); } else if (t.r2 < a.r2 || t.c2 < a.c2){ tx(s, 'Clear', () => clearRange(s, t.r2 < a.r2 ? {r1: t.r2 + 1, c1: a.c1, r2: a.r2, c2: a.c2} : {r1: a.r1, c1: t.c2 + 1, r2: a.r2, c2: a.c2}, 'contents')); G.sel.g = t; draw(); if (G.onChange) G.onChange(); } return; }
     if (d.mode === 'paint'){ if (G.onPaint) G.onPaint(G.sel.g); return; }
-    if (d.mode === 'sel' && d.was && e.pointerType === 'mouse' && G.sel.g.r1 === G.sel.g.r2 && G.sel.g.c1 === G.sel.g.c2 && e.detail >= 2) startEdit();
+    if (d.mode === 'sel' && d.was && e.pointerType === 'mouse' && G.sel.g.r1 === G.sel.g.r2 && G.sel.g.c1 === G.sel.g.c2 && e.detail >= 2) Grid.startEdit();
     if (d.mode === 'point'){ G.ptRef = G.ptRef; return; }
   }
   const range = (a, b) => Array.from({length: b - a + 1}, (_, i) => a + i);
   function onDbl(e){ const t = e.target; if (t.classList.contains('rs')){ const isCol = t.dataset.rc != null; const i = +(isCol ? t.dataset.rc : t.dataset.rr); if (isCol) autoFitCols(G.sel.g.c1 <= i && i <= G.sel.g.c2 && G.sel.g.r2 >= MAXR - 1 ? range(G.sel.g.c1, G.sel.g.c2) : [i]); else autoFitRows([i]); return; }
-    if (t.closest('.obj') || G.edit) return; const p = cellFromClient(e.clientX, e.clientY); if (p.inHdrC || p.inHdrR) return; select(p.r, p.c); startEdit(); }
+    if (t.closest('.obj') || G.edit) return; const p = cellFromClient(e.clientX, e.clientY); if (p.inHdrC || p.inHdrR) return; select(p.r, p.c); Grid.startEdit(); }
   function autoFitCols(cols){ const s = G.sh; tx(s, 'AutoFit', () => { const {R} = Calc.lastRC(s); for (const c of cols){ let w = 20; for (let r = 0; r <= R; r++){ const x = cellAt(s, r, c); if (!x || mergeAt(s, r, c)) continue; const st = x.s || {}; const t = displayAt(s, r, c, G.showF).text; if (!t) continue; w = Math.max(w, measure(t, `${st.b ? '700 ' : ''}${((st.size || 11) * 4 / 3).toFixed(1)}px ${fontCss(st.font)}`) + 12); } s.colW[c] = Math.min(600, Math.ceil(w)); } }, true); geoDirty = true; draw(); if (G.onChange) G.onChange(); }
   function autoFitRows(rows){ const s = G.sh; tx(s, 'AutoFit', () => { for (const r of rows){ delete s.rowH[r]; autoFitRowIfWrap(r); } }, true); geoDirty = true; draw(); if (G.onChange) G.onChange(); }
 

@@ -236,10 +236,11 @@ const UI = (() => {
     dialog(s.notes[k] ? 'Edit note' : 'New note', t, [s.notes[k] ? ['Delete', 'danger', () => act('Note', () => { delete s.notes[k]; }, true)] : null, ['Cancel'], ['Save', 'primary', () => act('Note', () => { if (t.value.trim()) s.notes[k] = t.value.trim(); else delete s.notes[k]; }, true)]].filter(Boolean)); }
   function linkDialog(){ const s = sh(), {r, c} = sel(), k = key(r, c); const u = h('input', {class: 'inp', type: 'url', placeholder: 'https://… or someone@email.com', value: s.links[k] || ''}), t = h('input', {class: 'inp', placeholder: 'Text to show', value: displayAt(s, r, c).text});
     dialog('Insert link', h('div', {style: 'display:flex;flex-direction:column;gap:8px'}, field('Address', u), field('Text', t)), [s.links[k] ? ['Remove link', 'danger', () => act('Link', () => { delete s.links[k]; }, true)] : null, ['Cancel'], ['Insert', 'primary', () => { let url = u.value.trim(); if (!url) return false; if (!/^[a-z]+:/i.test(url)) url = (url.includes('@') ? 'mailto:' : 'https://') + url; act('Link', () => { s.links[k] = url; if (t.value.trim() && t.value !== displayAt(s, r, c).text) inputCell(s, r, c, t.value); else if (!cellAt(s, r, c)) inputCell(s, r, c, url); }, true); }]].filter(Boolean)); }
-  function openLink(){ const u = sh().links[key(sel().r, sel().c)]; if (u){ if (window.SRK_NATIVE) location.href = u; else window.open(u, '_blank', 'noopener'); } }
+  function openLink(){ const u = sh().links[key(sel().r, sel().c)]; if (u && u.startsWith('#')){ goTo(u.slice(1)); return; } if (u){ if (window.SRK_NATIVE) location.href = u; else window.open(u, '_blank', 'noopener'); } }
 
   /* ---------------------------------------------------------------- Format Cells dialog (Ctrl+1) */
-  function formatCellsDialog(){ const s0 = curStyle(); const v = valueAt(sh(), sel().r, sel().c);
+  let basicFmt = false;
+  function formatCellsDialog(){ if (!basicFmt && (typeof More !== 'undefined') && More.formatCells) return More.formatCells(); const s0 = curStyle(); const v = valueAt(sh(), sel().r, sel().c);
     const cat = h('select', {class: 'inp'}); FMT_PRESETS.forEach(([n, f]) => cat.append(h('option', {value: f}, n))); cat.append(h('option', {value: '__custom'}, 'Custom…'));
     const custom = h('input', {class: 'inp', value: s0.nf || 'General', placeholder: 'e.g. #,##0.00 or dd-mmm-yyyy'}); const prev = h('div', {class: 'inp', style: 'background:var(--surface);font-family:var(--f-mono)'}, '');
     const known = FMT_PRESETS.find(([, f]) => f === (s0.nf || 'General')); cat.value = known ? known[1] : '__custom';
@@ -253,7 +254,7 @@ const UI = (() => {
   /* ---------------------------------------------------------------- ribbon */
   const TABS = [['file', 'File'], ['home', 'Home'], ['insert', 'Insert'], ['layout', 'Page Layout'], ['formulas', 'Formulas'], ['data', 'Data'], ['review', 'Review'], ['view', 'View']];
   let tab = 'home'; const R = {};
-  function ctxTab(){ const o = G.objSel && Objects.find(G.objSel); if (o) return o.chart ? ['chart', 'Chart'] : ['picture', 'Picture']; if (tableAt(sh(), sel().r, sel().c)) return ['tabled', 'Table']; return null; }
+  function ctxTab(){ const o = G.objSel && Objects.find(G.objSel); if (o) return o.chart ? ['chart', 'Chart'] : o.shape ? ['shape', 'Shape'] : ['picture', 'Picture']; if ((typeof More !== 'undefined') && More.ctxTab){ const t = More.ctxTab(); if (t) return t; } if (tableAt(sh(), sel().r, sel().c)) return ['tabled', 'Table']; return null; }
   function buildTabs(){ const list = [...TABS]; const c = ctxTab(); if (c) list.push(c); if (!list.some(t => t[0] === tab)) tab = 'home'; const box = $('#rtabs'); const sig = list.map(t => t[0]).join() + tab; if (box.dataset.sig === sig) return; box.dataset.sig = sig; box.innerHTML = '';
     for (const [k, n] of list){ const b = h('button', {class: 'rtab' + (c && k === c[0] ? ' ctx' : '') + (k === 'file' ? ' file' : ''), role: 'tab', type: 'button', 'aria-selected': k === tab ? 'true' : 'false'}, n); b.addEventListener('pointerdown', e => e.preventDefault()); b.addEventListener('click', () => { if (k === 'file'){ App.fileMenu(); return; } tab = k; buildTabs(); buildRibbon(); }); box.append(b); }
     buildRibbon(); }
@@ -328,6 +329,7 @@ const UI = (() => {
         grp('Styles', rb(I.palette, 'Table style', b => tablePop(b), {label: 'Style', caret: true})), grp('Tools', rb(I.range, 'Convert to range', () => act('Table', () => { const g = t.range; forRange(g, (rr, cc) => { const ts = tableStyleAt(sh(), rr, cc); if (ts && (ts.fill || ts.b)) patchCell(sh(), rr, cc, x => { x.s = {...(ts.fill ? {fill: ts.fill} : {}), ...(ts.color ? {color: ts.color} : {}), ...(ts.b ? {b: true} : {}), ...(x.s || {})}; }); }); sh().tables = sh().tables.filter(x => x !== t); if (sh().filter && sh().filter.range.r1 === g.r1) sh().filter = null; }, true), {label: 'Convert to Range'})));
         if (t.header !== false) R.th.classList.add('on'); if (t.total) R.tt.classList.add('on'); if (t.banded !== false) R.tb.classList.add('on'); if (sh().filter) R.tf.classList.add('on'); }
     }
+    if ((typeof More !== 'undefined')) More.ribbon(tab, r, {grp, rb, R, o, fileBtn});
     refreshRibbon(); }
   function borderPop(anchor){ pop(anchor, p => { p.append(h('div', {class: 'ph'}, 'Borders')); for (const [k, n] of [['bottom', 'Bottom border'], ['top', 'Top border'], ['left', 'Left border'], ['right', 'Right border'], ['all', 'All borders'], ['outside', 'Outside borders'], ['thick', 'Thick outside borders'], ['double', 'Bottom double border'], ['thickbottom', 'Thick bottom border'], ['none', 'No border']]) p.append(mi(I.border, n, () => borders(k, borderPop.color || '#000000')));
     p.append(h('hr'), mi(I.color, 'Line colour…', () => colorPop(anchor, 'Line colour', c => { borderPop.color = c || '#000000'; toast('Pick a border to draw in this colour'); borderPop(anchor); }))); }); }
@@ -357,7 +359,7 @@ const UI = (() => {
     const nf = (styleAt(s, sel().r, sel().c) || {}).nf; const F = v => formatValue(Math.round(v * 1e10) / 1e10, nf && !isDateFmt(nf) ? nf : 'General').text;
     $('#aggTxt').innerHTML = cnt > 1 ? (n ? `Average: <b>${F(sum / n)}</b> &nbsp; Count: <b>${cnt}</b> &nbsp; Sum: <b>${F(sum)}</b>` + (innerWidth > 700 ? ` &nbsp; Min: <b>${F(mn)}</b> &nbsp; Max: <b>${F(mx)}</b>` : '') : `Count: <b>${cnt}</b>`) : '';
     const filt = s.filter && Object.keys(s.filter.cols || {}).length; $('#statTxt').textContent = G.edit ? (G.edit.mode === 'enter' ? 'Enter' : 'Edit') : G.painter ? 'Select cells to paste the format' : filt ? 'Filter on' : 'Ready'; }
-  function noteTip(){ document.querySelectorAll('.notetip').forEach(n => n.remove()); const t = sh().notes[key(sel().r, sel().c)]; if (!t) return; const bx = Grid.cellBox(sel().r, sel().c); const v = $('#gscroll').getBoundingClientRect(); const x = v.left + Grid.hw() + bx.x + bx.w - (sel().c >= sh().freeze.c ? $('#gscroll').scrollLeft : 0) + 6, y = v.top + Grid.hh() + bx.y - (sel().r >= sh().freeze.r ? $('#gscroll').scrollTop : 0);
+  function noteTip(){ document.querySelectorAll('.notetip').forEach(n => n.remove()); const cm = sh().comments && sh().comments[key(sel().r, sel().c)]; const t = [sh().notes[key(sel().r, sel().c)], cm && !cm.resolved ? cm.thread.map(m => `${m.a}: ${m.t}`).join('\n') : ''].filter(Boolean).join('\n— — —\n'); if (!t) return; const bx = Grid.cellBox(sel().r, sel().c); const v = $('#gscroll').getBoundingClientRect(); const x = v.left + Grid.hw() + bx.x + bx.w - (sel().c >= sh().freeze.c ? $('#gscroll').scrollLeft : 0) + 6, y = v.top + Grid.hh() + bx.y - (sel().r >= sh().freeze.r ? $('#gscroll').scrollTop : 0);
     document.body.append(h('div', {class: 'notetip', style: `left:${Math.min(x, innerWidth - 250)}px;top:${y}px`}, t)); }
   /* ---------------------------------------------------------------- context menu (long-press / right-click) */
   function contextMenu(x, y){ const s = sh(), k = key(sel().r, sel().c); const g = gsel(); const fullR = g.c1 === 0 && g.c2 >= MAXC - 1, fullC = g.r1 === 0 && g.r2 >= MAXR - 1;
@@ -366,13 +368,14 @@ const UI = (() => {
       else if (fullC) p.append(mi(I.colI, 'Insert columns', () => insertCells('col')), mi(I.del, 'Delete columns', () => deleteCells('col')), mi(I.width, 'Column width…', () => sizeDialog('col')), mi(I.hide, 'Hide', () => hideCmd('col')), mi(I.hide, 'Unhide', () => hideCmd('col', true)));
       else p.append(mi(I.insert, 'Insert…', () => insertPop($('#fbar'))), mi(I.del, 'Delete…', () => deletePop($('#fbar'))), mi(I.clear, 'Clear contents', () => act('Clear', () => clearRange(s, clampSel(), 'contents'))), mi(I.fillD, 'Fill (drag the handle)', () => { G.fill = true; Grid.refresh(false); toast('Drag the filled handle to fill'); }));
       p.append(h('hr'), mi(I.sort, 'Sort A → Z', () => sortQuick(false)), mi(I.filter, 'Filter by this value', () => { const v = displayAt(s, sel().r, sel().c).text; if (!s.filter) s.filter = {range: dataRegion(), cols: {}}; act('Filter', () => { s.filter.cols[sel().c] = {values: [v]}; }, true); }), mi(I.note, s.notes[k] ? 'Edit note' : 'New note', noteDialog), mi(I.link, s.links[k] ? 'Edit link' : 'Link', linkDialog));
-      if (s.links[k]) p.append(mi(I.link, 'Open link', openLink)); p.append(mi(I.format, 'Format cells…', formatCellsDialog)); }, {x, y}); }
+      if (s.links[k]) p.append(mi(I.link, 'Open link', openLink)); if ((typeof More !== 'undefined')) More.context(p); p.append(mi(I.format, 'Format cells…', formatCellsDialog)); }, {x, y}); }
   /* ---------------------------------------------------------------- keyboard */
   function onKey(e){
     if ($('#editView').hidden || document.querySelector('.dlg-back,.filemenu')) return; const mod = e.ctrlKey || e.metaKey, k = e.key;
     const inFbar = document.activeElement === $('#fbar'), inEd = document.activeElement === $('#cellEd'), inName = document.activeElement === $('#nameBox');
     if (inName){ if (k === 'Enter'){ e.preventDefault(); goTo($('#nameBox').value); $('#nameBox').blur(); } if (k === 'Escape'){ $('#nameBox').blur(); onSel(); } return; }
     if (mod && k.toLowerCase() === 's'){ e.preventDefault(); App.saveXlsx(); return; }
+    if ((typeof More !== 'undefined') && !(G.edit && (inEd || inFbar)) && More.key(e)) return;
     if (G.edit && (inEd || inFbar)){
       if (G.auto && !$('#autoBox').hidden && (k === 'Tab' || (k === 'Enter' && G.auto)) && G.auto.list){ e.preventDefault(); Grid.pickAuto(G.auto.list[0]); return; }
       if (k === 'Enter' && e.altKey){ e.preventDefault(); const ed = document.activeElement; const i = ed.selectionStart; ed.value = ed.value.slice(0, i) + '\n' + ed.value.slice(ed.selectionEnd); ed.setSelectionRange(i + 1, i + 1); patchWrap = true; Grid.placeEditor(); return; }
@@ -432,5 +435,5 @@ const UI = (() => {
     $('#gscroll').addEventListener('scroll', () => document.querySelectorAll('.notetip').forEach(n => n.remove()), {passive: true});
   }
   function open(wb){ wire(); tab = 'home'; $('#rtabs').dataset.sig = ''; G.z = (wb.sheets[wb.active] || wb.sheets[0]).zoom || 1; $('#zoomLbl').textContent = Math.round(G.z * 100) + '%'; History.reset(); Grid.open(wb); tabs(); buildTabs(); onSel(); }
-  return {open, toast, dialog, pop, mi, closePop, tabs, onSel, status, buildTabs, buildRibbon, refreshRibbon, I, h, insertChart, autoSum, field};
+  return {open, toast, dialog, pop, mi, closePop, tabs, onSel, status, buildTabs, buildRibbon, refreshRibbon, I, h, insertChart, autoSum, field, act, changed, setStyle, colorPop, clampSel, dataRegion, looksHeader, copy, paste, goTo, sortQuick, toggleFilter, makeTable, findDialog, linkDialog, noteDialog, fillDir, addCf, curStyle, formatBasic: () => { basicFmt = true; try { formatCellsDialog(); } finally { basicFmt = false; } }, get tab(){ return tab; }, set tab(v){ tab = v; }};
 })();

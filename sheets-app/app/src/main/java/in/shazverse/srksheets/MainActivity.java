@@ -165,7 +165,7 @@ public class MainActivity extends AppCompatActivity {
         if (u == null) return;
         incomingUri = u;
         String type = intent.getType() != null ? intent.getType() : getContentResolver().getType(u);
-        String fallback = type != null && type.contains("ms-excel") ? "workbook.xls" : type != null && (type.startsWith("text/") || type.contains("csv")) ? "workbook.csv" : "workbook.xlsx";
+        String fallback = type != null && type.contains("opendocument") ? "workbook.ods" : type != null && type.contains("ms-excel") ? "workbook.xls" : type != null && (type.startsWith("text/") || type.contains("csv")) ? "workbook.csv" : "workbook.xlsx";
         incomingName = displayName(u, fallback);
     }
 
@@ -193,7 +193,7 @@ public class MainActivity extends AppCompatActivity {
             }
         } catch (Exception ignored) { }
         String last = u.getLastPathSegment();
-        return last != null && last.matches("(?i).+\\.(xlsx|xlsm|xls|csv|tsv|txt)$") ? last : fallback;
+        return last != null && last.matches("(?i).+\\.(xlsx|xlsm|xls|xlsb|ods|csv|tsv|txt)$") ? last : fallback;
     }
 
     private static String jsString(String s) {
@@ -231,7 +231,7 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
         }
-        if (mimes.contains("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")) { mimes.add("application/vnd.ms-excel"); mimes.add("text/csv"); mimes.add("text/comma-separated-values"); mimes.add("application/octet-stream"); mimes.add("application/zip"); }
+        if (mimes.contains("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")) { mimes.add("application/vnd.ms-excel"); mimes.add("text/csv"); mimes.add("text/comma-separated-values"); mimes.add("application/vnd.oasis.opendocument.spreadsheet"); mimes.add("application/octet-stream"); mimes.add("application/octet-stream"); mimes.add("application/zip"); }
         boolean any = mimes.isEmpty() || mimes.contains("*/*");
 
         Intent camera = null;
@@ -285,6 +285,8 @@ public class MainActivity extends AppCompatActivity {
             case "xls": return "application/vnd.ms-excel";
             case "xlsm": return "application/vnd.ms-excel.sheet.macroEnabled.12";
             case "csv": return "text/csv";
+            case "ods": return "application/vnd.oasis.opendocument.spreadsheet";
+            case "xlsb": return "application/vnd.ms-excel.sheet.binary.macroEnabled.12";
             case "tsv": return "text/tab-separated-values";
             case "md": return "text/markdown";
             case "docx": return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";

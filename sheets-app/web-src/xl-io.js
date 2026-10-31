@@ -41,6 +41,16 @@ const XIO = (() => {
       const runs = []; for (const [r, cs] of [...byRow].sort((a, b) => a[0] - b[0])){ cs.sort((a, b) => a - b); let s0 = cs[0], p = cs[0]; for (const c of cs.slice(1).concat([null])){ if (c === p + 1){ p = c; continue; } runs.push({r1: r, r2: r, c1: s0, c2: p}); s0 = p = c; } }
       const open = []; for (const g of runs){ const m = open.find(o => o.c1 === g.c1 && o.c2 === g.c2 && o.r2 === g.r1 - 1); if (m) m.r2 = g.r1; else open.push({...g}); }
       for (const g of [...big, ...open]) out.push({range: g, ...rule}); } return out; }
+  const arrRefs = [];
+  /* newer Excel functions are stored with a _xlfn. prefix (and LET/LAMBDA names with _xlpm.) */
+  const XLFN = new Set(('XLOOKUP XMATCH IFS SWITCH MAXIFS MINIFS CONCAT TEXTJOIN IFNA XOR SORTBY UNIQUE SEQUENCE RANDARRAY LET LAMBDA TEXTBEFORE TEXTAFTER TEXTSPLIT VSTACK HSTACK TAKE DROP CHOOSECOLS CHOOSEROWS TOCOL TOROW WRAPROWS WRAPCOLS EXPAND MAP REDUCE SCAN BYROW BYCOL MAKEARRAY ISOMITTED ARRAYTOTEXT VALUETOTEXT ' +
+    'STDEV.S STDEV.P VAR.S VAR.P MODE.SNGL MODE.MULT PERCENTILE.INC PERCENTILE.EXC QUARTILE.INC QUARTILE.EXC RANK.EQ RANK.AVG CEILING.MATH FLOOR.MATH NORM.DIST NORM.INV NORM.S.DIST NORM.S.INV COVARIANCE.P COVARIANCE.S FORECAST.LINEAR DAYS ISOWEEKNUM AGGREGATE NUMBERVALUE UNICHAR UNICODE ' +
+    'BINOM.DIST POISSON.DIST EXPON.DIST CONFIDENCE.NORM CONFIDENCE.T NETWORKDAYS.INTL WORKDAY.INTL BASE DECIMAL ARABIC SHEET SHEETS FORMULATEXT ISFORMULA COT CSC SEC ACOT COMBINA BITAND BITOR BITXOR PDURATION RRI GAMMA GAMMALN.PRECISE ' +
+    'T.TEST T.DIST T.DIST.2T T.DIST.RT T.INV T.INV.2T CHISQ.TEST CHISQ.DIST CHISQ.DIST.RT CHISQ.INV CHISQ.INV.RT F.TEST F.DIST F.DIST.RT F.INV F.INV.RT Z.TEST PERCENTRANK.INC REGEXTEST REGEXEXTRACT REGEXREPLACE GROUPBY PERCENTOF TRIMRANGE').split(' '));
+  const XLWS = new Set(['FILTER', 'SORT']);
+  function toFile(f, wb){ const toks = Formula.tokenize(f); const lam = /\b(LET|LAMBDA)\s*\(/i.test(f); const names = new Set(Object.keys(wb.names || {}).map(n => n.toUpperCase()));
+    return toks.map(t => { if (t.type === 'func'){ const n = t.name; if (XLWS.has(n)) return '_xlfn._xlws.' + t.text.replace(/^_xl\w+\./g, ''); if (XLFN.has(n)) return '_xlfn.' + t.text.replace(/^_xl\w+\./g, ''); if (lam && !Formula.FN[n] && !names.has(n)) return '_xlpm.' + t.text; return t.text; }
+      if (t.type === 'name' && lam && !names.has(t.name.toUpperCase()) && !Formula.FN[t.name.toUpperCase()]) return '_xlpm.' + t.name; if (t.type === 'ref' && t.spill) return t.text.slice(0, -1).replace(/^(.*!)?(.*)$/, '_xlfn.ANCHORARRAY($1$2)'); return t.text; }).join(''); }
   async function readXlsx(buf, name){
     const head = new Uint8Array(buf.slice(0, 4)); if (head[0] === 0xD0 && head[1] === 0xCF) throw new Error('This is an old Excel 97–2003 (.xls) file. SRK Sheets opens .xlsx files. Open it in Excel or Google Sheets, save as .xlsx, then open that here.');
     const X = new ExcelJS.Workbook(); try { await X.xlsx.load(buf); } catch(e){ console.error(e); throw new Error('This file isn’t an Excel workbook (.xlsx), or it is damaged.'); }
@@ -51,9 +61,9 @@ const XIO = (() => {
       (ws._columns || []).forEach((col, i) => { if (!col) return; if (col.width != null && Math.abs(col.width - 8.43) > .05) sh.colW[i] = PX_W(col.width); if (col.hidden) sh.hidC[i] = 1; });
       ws.eachRow({includeEmpty: true}, (row, rn) => { const r = rn - 1; if (row.height != null && row.customHeight !== false && Math.abs(row.height - 15) > .1) sh.rowH[r] = Math.round(row.height * 4 / 3); if (row.hidden) sh.hidR[r] = 1;
         row.eachCell({includeEmpty: true}, (cell, cn) => { const c = cn - 1; if (cell.isMerged && cell.master !== cell) return; const x = {}; let val = cell.value;
-          const st = styleIn(cell); if (st) x.s = st;
+          const st = styleIn(cell); if (st) x.s = st; try { if (cell.protection && cell.protection.locked === false) x.s = {...(x.s || {}), unlocked: true}; } catch(e){} if (val && val.shareType === 'array' && val.ref){ const g = parseRange(String(val.ref).replace(/\$/g, '')); if (g) arrRefs.push({g, r, c}); }
           if (val && typeof val === 'object' && !(val instanceof Date)){
-            if (val.formula != null || val.sharedFormula != null){ let f = null; try { f = cell.formula; } catch(e){} if (!f && val.sharedFormula){ try { const m = ws.getCell(val.sharedFormula); const mf = m.formula || (m.value && m.value.formula); if (mf) f = Formula.shift(mf, r - (m.row - 1), c - (m.col - 1)); } catch(e){} } if (f) x.f = String(f).replace(/^=/, '').replace(/_xlfn\.|_xlws\./g, ''); else { const res = val.result; x.v = res instanceof Date ? dateSerial(res) : res && res.error ? err(res.error) : res ?? null; } }
+            if (val.formula != null || val.sharedFormula != null){ let f = null; try { f = cell.formula; } catch(e){} if (!f && val.sharedFormula){ try { const m = ws.getCell(val.sharedFormula); const mf = m.formula || (m.value && m.value.formula); if (mf) f = Formula.shift(mf, r - (m.row - 1), c - (m.col - 1)); } catch(e){} } if (f) x.f = String(f).replace(/^=/, '').replace(/_xlfn\.ANCHORARRAY\(([^()]+)\)/gi, '$1#').replace(/_xlfn\.|_xlws\.|_xlpm\./g, ''); else { const res = val.result; x.v = res instanceof Date ? dateSerial(res) : res && res.error ? err(res.error) : res ?? null; } }
             else if (val.richText) x.v = val.richText.map(t => t.text).join('');
             else if (val.hyperlink){ x.v = typeof val.text === 'object' && val.text && val.text.richText ? val.text.richText.map(t => t.text).join('') : val.text; sh.links[key(r, c)] = val.hyperlink; }
             else if (val.error) x.v = err(val.error); else if (val.text != null) x.v = String(val.text);
@@ -62,6 +72,7 @@ const XIO = (() => {
           if (x.v === undefined) delete x.v; if (x.v != null || x.f != null || x.s) sh.cells[key(r, c)] = x;
           const note = cell.note; if (note) sh.notes[key(r, c)] = typeof note === 'string' ? note : (note.texts || []).map(t => t.text).join('');
         }); });
+      for (const {g, r, c} of arrRefs) forRange(g, (rr, cc) => { if (rr === r && cc === c) return; const x = sh.cells[key(rr, cc)]; if (!x) return; delete x.v; delete x.f; if (!x.s) delete sh.cells[key(rr, cc)]; }); arrRefs.length = 0;
       try { for (const m of (ws.model.merges || [])){ const g = parseRange(m); if (g) sh.merges.push(g); } } catch(e){}
       try { const dv = ws.dataValidations && ws.dataValidations.model || {}; for (const [ref, d] of Object.entries(dv)){ for (const part of ref.split(/\s+/)){ const g = parseRange(part); if (!g) continue; const f0 = (d.formulae || [])[0], f1 = (d.formulae || [])[1];
             if (d.type === 'list') sh.dv.push({range: g, type: 'list', list: /^"/.test(String(f0)) ? String(f0).slice(1, -1) : '=' + String(f0).replace(/^=/, '')});
@@ -74,10 +85,14 @@ const XIO = (() => {
           let w = ext2 && ext2.width, h = ext2 && ext2.height; if ((!w || !h) && br){ const span = (a, b2, sz) => { let s = 0; for (let i = a; i < b2; i++) s += sz(i); return s; }; w = span(c0, Math.floor(br.nativeCol ?? br.col), i => sh.colW[i] ?? DEF_W) + (br.nativeColOff || 0) / EMU - dx; h = span(r0, Math.floor(br.nativeRow ?? br.row), i => sh.rowH[i] ?? DEF_H) + (br.nativeRowOff || 0) / EMU - dy; }
           sh.images.push({id: uid(), src: 'm:' + id, r: r0, c: c0, dx, dy, w: Math.round(w || 200), h: Math.round(h || 150)}); } } catch(e){ console.warn(e); }
       try { const ps = ws.pageSetup || {}; sh.page = {orient: ps.orientation === 'landscape' ? 'landscape' : 'portrait', size: ps.paperSize === 1 ? 'Letter' : 'A4', fit: ps.fitToWidth ? 'width' : 'none', grid: !!ps.showGridLines, area: ps.printArea ? parseRange(String(ps.printArea).split(',')[0]) : null}; } catch(e){}
+      try { const ps = ws.pageSetup || {}; const m = ps.margins; if (m && m.left != null) sh.page.margins = m.left <= 0.4 ? 'narrow' : m.left >= 0.95 ? 'wide' : 'normal'; if (ps.printTitlesRow) sh.page.titles = String(ps.printTitlesRow).replace(/\$/g, ''); if (ps.horizontalCentered) sh.page.center = true; const hf = ws.headerFooter || {}; if (hf.oddHeader) sh.page.header = hfIn(hf.oddHeader); if (hf.oddFooter) sh.page.footer = hfIn(hf.oddFooter); } catch(e){}
+      try { ws.eachRow({includeEmpty: true}, (row, n) => { if (row.outlineLevel) (sh.outR = sh.outR || {})[n - 1] = row.outlineLevel; }); (ws.columns || []).forEach((col, i) => { if (col && col.outlineLevel) (sh.outC = sh.outC || {})[i] = col.outlineLevel; }); } catch(e){}
+      try { if (ws.sheetProtection && ws.sheetProtection.sheet) sh.protect = {hash: null, pw: false}; } catch(e){}
       wb.sheets.push(sh);
     });
     try { for (const d of (X.definedNames.model || [])){ if (!d.name || /^_xlnm/.test(d.name)) continue; wb.names[d.name] = (d.ranges || [])[0]; } } catch(e){}
     try { await readCharts(buf, wb); } catch(e){ console.warn('charts', e); }
+    try { await readSparks(buf, wb); } catch(e){ console.warn('sparklines', e); }
     if (!wb.sheets.length) wb.sheets.push(newSheet('Sheet1'));
     const act = (X.views && X.views[0] && X.views[0].activeTab) || 0; wb.active = Math.min(act, wb.sheets.length - 1);
     return wb;
@@ -95,6 +110,7 @@ const XIO = (() => {
       case 'colorScale': { const cs = (rule.color || []).map(color).filter(Boolean); return {type: cs.length === 2 ? 'scale2' : 'scale3', colors: cs.length >= 2 ? cs : undefined}; }
       case 'expression': return f[0] ? {type: 'formula', f: String(f[0]).replace(/^=/, ''), style: st} : null;
       case 'containsBlanks': return {type: 'blank', style: st};
+      case 'iconSet': { const n = String(rule.iconSet || '3Arrows'); return {type: 'icons', set: /Traffic|Signs/.test(n) ? 'traffic' : /Flag/.test(n) ? 'flags' : /Star/.test(n) ? 'stars' : /Symbol/.test(n) ? 'checks' : /Rating|Quarter/.test(n) ? 'quarters' : 'arrows'}; }
     }
     return null;
   }
@@ -108,8 +124,8 @@ const XIO = (() => {
     for (const s of sheetsX){ const sh = wb.sheets.find(x => x.name === s.getAttribute('name')); if (!sh) continue; const rid = s.getAttributeNS(RNS, 'id') || s.getAttribute('r:id'); const path = join('xl/workbook.xml', wrels[rid].t); const srels = await rels(path);
       for (const r of Object.values(srels)){ if (!/\/drawing$/.test(r.type)) continue; const dp = join(path, r.t); const dx = await txt(dp); if (!dx) continue; const drels = await rels(dp); const D = P(dx);
         for (const anc of [...D.documentElement.children]){ const ch = anc.getElementsByTagNameNS('*', 'chart')[0]; if (!ch) continue; const cr = drels[ch.getAttributeNS(RNS, 'id') || ch.getAttribute('r:id')]; if (!cr) continue; const cx = await txt(join(dp, cr.t)); if (!cx) continue; const C = P(cx);
-          const plot = C.getElementsByTagNameNS('*', 'plotArea')[0]; if (!plot) continue; const kinds = ['barChart', 'bar3DChart', 'lineChart', 'line3DChart', 'areaChart', 'pieChart', 'pie3DChart', 'doughnutChart', 'scatterChart']; const ce = [...plot.children].find(e => kinds.includes(e.localName)); if (!ce) continue;
-          const dir = (ce.getElementsByTagNameNS('*', 'barDir')[0] || {getAttribute: () => 'col'}).getAttribute('val'); const k = ce.localName; const type = /bar/.test(k) ? (dir === 'bar' ? 'bar' : 'column') : /line|scatter/.test(k) ? 'line' : /area/.test(k) ? 'area' : /doughnut/.test(k) ? 'doughnut' : 'pie';
+          const plot = C.getElementsByTagNameNS('*', 'plotArea')[0]; if (!plot) continue; const kinds = ['barChart', 'bar3DChart', 'lineChart', 'line3DChart', 'areaChart', 'pieChart', 'pie3DChart', 'doughnutChart', 'scatterChart', 'radarChart']; const ce = [...plot.children].find(e => kinds.includes(e.localName)); if (!ce) continue;
+          const dir = (ce.getElementsByTagNameNS('*', 'barDir')[0] || {getAttribute: () => 'col'}).getAttribute('val'); const k = ce.localName; const grp = (ce.getElementsByTagNameNS('*', 'grouping')[0] || {getAttribute: () => ''}).getAttribute('val'); const multi = [...plot.children].filter(e => kinds.includes(e.localName)).length > 1; const type = multi && /bar/.test(k) ? 'combo' : /bar/.test(k) ? (dir === 'bar' ? (grp === 'stacked' ? 'barStack' : 'bar') : grp === 'stacked' ? 'colStack' : grp === 'percentStacked' ? 'col100' : 'column') : /scatter/.test(k) ? 'scatter' : /line/.test(k) ? 'line' : /area/.test(k) ? (grp === 'stacked' ? 'areaStack' : 'area') : /doughnut/.test(k) ? 'doughnut' : /radar/.test(k) ? 'radar' : 'pie';
           const refs = [...ce.getElementsByTagNameNS('*', 'f')].map(f => f.textContent); let g = null; let srcSheet = null;
           for (const f of refs){ const m = /^(?:'((?:[^']|'')+)'|([^!]+))!(.+)$/.exec(f.trim()); const rg = parseRange(m ? m[3].replace(/\$/g, '') : f.replace(/\$/g, '')); if (!rg) continue; if (m) srcSheet = (m[1] || m[2]).replace(/''/g, "'"); g = g ? {r1: Math.min(g.r1, rg.r1), c1: Math.min(g.c1, rg.c1), r2: Math.max(g.r2, rg.r2), c2: Math.max(g.c2, rg.c2)} : rg; }
           if (!g) continue; if (srcSheet && srcSheet !== sh.name) continue;
@@ -125,25 +141,29 @@ const XIO = (() => {
   }
   /* ---------------------------------------------------------------- write .xlsx */
   async function writeXlsx(wb){
-    const X = new ExcelJS.Workbook(); X.creator = 'SRK Sheets'; X.created = new Date(); X.calcProperties = {fullCalcOnLoad: true};
+    const protects = []; const X = new ExcelJS.Workbook(); X.creator = 'SRK Sheets'; X.created = new Date(); X.calcProperties = {fullCalcOnLoad: true};
     const imgIds = {};
     for (const sh of wb.sheets){
       const fr = sh.freeze.r, fc = sh.freeze.c;
       const ws = X.addWorksheet(sh.name, {properties: {tabColor: sh.tab ? {argb: argb(sh.tab)} : undefined}, state: sh.hiddenSheet ? 'hidden' : 'visible', views: [{state: fr || fc ? 'frozen' : 'normal', xSplit: fc || undefined, ySplit: fr || undefined, showGridLines: sh.grid !== false, zoomScale: Math.round((sh.zoom || 1) * 100)}],
-        pageSetup: {paperSize: sh.page && sh.page.size === 'Letter' ? 1 : 9, orientation: sh.page && sh.page.orient || 'portrait', fitToPage: sh.page && sh.page.fit === 'width', fitToWidth: 1, fitToHeight: 0, printArea: sh.page && sh.page.area ? rangeAddr(sh.page.area) : undefined}});
+        pageSetup: {paperSize: sh.page && sh.page.size === 'Letter' ? 1 : 9, orientation: sh.page && sh.page.orient || 'portrait', fitToPage: sh.page && sh.page.fit === 'width', fitToWidth: 1, fitToHeight: 0, printArea: sh.page && sh.page.area ? rangeAddr(sh.page.area) : undefined, margins: pageMargins(sh.page), printTitlesRow: sh.page && sh.page.titles ? sh.page.titles : undefined, horizontalCentered: !!(sh.page && sh.page.center)}, headerFooter: hfOut(sh.page)});
+      for (const r in (sh.outR || {})) ws.getRow(+r + 1).outlineLevel = sh.outR[r]; for (const c in (sh.outC || {})) ws.getColumn(+c + 1).outlineLevel = sh.outC[c];
+      if (sh.protect) protects.push(ws.protect('', {selectLockedCells: true, selectUnlockedCells: true, formatColumns: false, formatRows: false}).catch(() => {}));
       for (const c in sh.colW){ ws.getColumn(+c + 1).width = CH_W(sh.colW[c]); } for (const c in sh.hidC) ws.getColumn(+c + 1).hidden = true;
       for (const r in sh.rowH){ ws.getRow(+r + 1).height = Math.round(sh.rowH[r] * 0.75 * 100) / 100; }
       const filt = filteredRows(sh); for (const r in sh.hidR) ws.getRow(+r + 1).hidden = true; for (const r of filt) ws.getRow(r + 1).hidden = true;
       for (const k in sh.cells){ const [r, c] = unkey(k); const x = sh.cells[k]; const cell = ws.getCell(r + 1, c + 1); let st = x.s ? {...x.s} : null;
         const tst = tableStyleAt(sh, r, c); if (tst){ st = {...(tst.fill ? {fill: tst.fill} : {}), ...(tst.color ? {color: tst.color} : {}), ...(tst.b ? {b: true} : {}), ...(st || {})}; }
-        if (x.f != null){ const res = Calc.get(sh, r, c); cell.value = {formula: x.f, result: isErr(res) ? {error: res.e === '#CIRC!' ? '#REF!' : res.e} : (res === null ? undefined : res)}; }
+        if (x.f != null){ const res = Calc.get(sh, r, c); const R = v => isErr(v) ? {error: ['#CIRC!', '#CALC!'].includes(v.e) ? (v.e === '#CALC!' ? '#VALUE!' : '#REF!') : v.e} : (v === null ? undefined : v); const sp = Calc.spillInfo(sh, r, c);
+          if (sp && sp.r === r && sp.c === c){ cell.value = {formula: toFile(x.f, wb), result: R(res), shareType: 'array', ref: rangeAddr({r1: r, c1: c, r2: r + sp.rows - 1, c2: c + sp.cols - 1})}; for (let i = 0; i < sp.rows; i++) for (let j = 0; j < sp.cols; j++) if (i || j){ const sv = Calc.get(sh, r + i, c + j); ws.getCell(r + i + 1, c + j + 1).value = isErr(sv) ? {error: sv.e} : sv; } }
+          else cell.value = {formula: toFile(x.f, wb), result: R(res)}; }
         else if (isErr(x.v)) cell.value = {error: x.v.e}; else cell.value = x.v ?? null;
         if (sh.links[k]) cell.value = {text: String(displayAt(sh, r, c).text || sh.links[k]), hyperlink: sh.links[k]};
-        if (st) Object.assign(cell, styleOut(st));
-        if (sh.notes[k]) cell.note = sh.notes[k]; }
+        if (st) Object.assign(cell, styleOut(st)); if (st && st.unlocked) cell.protection = {locked: false};
+        const nt = noteText(sh, k); if (nt) cell.note = nt; }
       // table cells without a value still need the table look
       for (const t of sh.tables) forRange(t.range, (r, c) => { if (sh.cells[key(r, c)]) return; const tst = tableStyleAt(sh, r, c); if (tst && tst.fill) Object.assign(ws.getCell(r + 1, c + 1), styleOut({fill: tst.fill})); });
-      for (const k in sh.notes) if (!sh.cells[k]){ const [r, c] = unkey(k); ws.getCell(r + 1, c + 1).note = sh.notes[k]; }
+      for (const k of new Set([...Object.keys(sh.notes), ...Object.keys(sh.comments || {})])) if (!sh.cells[k]){ const [r, c] = unkey(k); const nt = noteText(sh, k); if (nt) ws.getCell(r + 1, c + 1).note = nt; }
       for (const m of sh.merges) try { ws.mergeCells(m.r1 + 1, m.c1 + 1, m.r2 + 1, m.c2 + 1); } catch(e){}
       for (const d of sh.dv){ const rule = d.type === 'list' ? {type: 'list', allowBlank: true, showErrorMessage: true, formulae: [/^=/.test(d.list) ? d.list.slice(1) : `"${String(d.list).replace(/"/g, '')}"`]} : {type: d.type === 'length' ? 'textLength' : d.type, operator: ({between: 'between', gte: 'greaterThanOrEqual', lte: 'lessThanOrEqual', eq: 'equal'})[d.op || 'between'], allowBlank: true, showErrorMessage: true, formulae: d.op === 'between' ? [d.min, d.max] : [d.op === 'lte' ? d.max : d.min]};
         const g = d.range; const n = (g.r2 - g.r1 + 1) * (g.c2 - g.c1 + 1); if (ws.dataValidations && ws.dataValidations.add) ws.dataValidations.add(rangeAddr(g), rule); else if (n < 5000) forRange(g, (r, c) => { ws.getCell(r + 1, c + 1).dataValidation = rule; }); }
@@ -153,8 +173,9 @@ const XIO = (() => {
         ws.addImage(id, {tl: {col: im.c + (im.dx || 0) / (sh.colW[im.c] ?? DEF_W), row: im.r + (im.dy || 0) / (sh.rowH[im.r] ?? DEF_H)}, ext: {width: im.w, height: im.h}, editAs: 'oneCell'}); }
     }
     for (const [n, ref] of Object.entries(wb.names)){ try { X.definedNames.add(ref.replace(/^=/, ''), n); } catch(e){} }
-    let buf = await X.xlsx.writeBuffer();
+    await Promise.all(protects); let buf = await X.xlsx.writeBuffer();
     if (wb.sheets.some(s => s.charts.length)) buf = await addCharts(buf, wb);
+    if (wb.sheets.some(s => (s.sparks || []).length)) buf = await addSparks(buf, wb);
     return buf;
   }
   function cfOut(r){
@@ -172,10 +193,33 @@ const XIO = (() => {
       case 'scale2': return {type: 'colorScale', cfvo: [{type: 'min'}, {type: 'max'}], color: (r.colors || ['#FFFFFF', '#63BE7B']).map(c => ({argb: argb(c)}))};
       case 'scale3': return {type: 'colorScale', cfvo: [{type: 'min'}, {type: 'percentile', value: 50}, {type: 'max'}], color: (r.colors || ['#F8696B', '#FFEB84', '#63BE7B']).map(c => ({argb: argb(c)}))};
       case 'formula': return {type: 'expression', formulae: [r.f], style};
+      case 'icons': { const n = r.set === 'quarters' ? 4 : 3; return {type: 'iconSet', iconSet: {arrows: '3Arrows', traffic: '3TrafficLights1', flags: '3Flags', stars: '3Stars', checks: '3Symbols2', quarters: '4Rating'}[r.set || 'arrows'] || '3Arrows', showValue: true, cfvo: n === 4 ? [{type: 'percent', value: 0}, {type: 'percent', value: 25}, {type: 'percent', value: 50}, {type: 'percent', value: 75}] : [{type: 'percent', value: 0}, {type: 'percent', value: 33}, {type: 'percent', value: 67}]}; }
     }
     return null;
   }
   /* charts written as DrawingML parts */
+  /* page setup, comments, sparklines */
+  const MARGIN_IN = {narrow: [0.25, 0.75], normal: [0.7, 0.75], wide: [1, 1]};
+  function pageMargins(pg){ const m = MARGIN_IN[(pg && pg.margins) || 'normal'] || MARGIN_IN.normal; return {left: m[0], right: m[0], top: m[1], bottom: m[1], header: 0.3, footer: 0.3}; }
+  const HF_CODES = [['&[Page]', '&P'], ['&[Pages]', '&N'], ['&[Date]', '&D'], ['&[Time]', '&T'], ['&[Sheet]', '&A'], ['&[File]', '&F']];
+  function hfOut(pg){ if (!pg) return undefined; const conv = t => { let o = String(t).replace(/&(?!\[)/g, '&&'); for (const [a, b] of HF_CODES) o = o.split(a).join(b); return '&C' + o; }; const out = {}; if (pg.header) out.oddHeader = conv(pg.header); if (pg.footer) out.oddFooter = conv(pg.footer); return Object.keys(out).length ? out : undefined; }
+  function hfIn(t){ if (!t) return ''; let o = String(t).replace(/&[LCR]/g, ' ').replace(/&"[^"]*"/g, '').replace(/&\d+/g, ''); for (const [a, b] of HF_CODES) o = o.split(b).join(a); return o.replace(/&&/g, '&').trim(); }
+  function noteText(sh, k){ const parts = []; if (sh.notes[k]) parts.push(sh.notes[k]); const c = sh.comments && sh.comments[k]; if (c && c.thread && c.thread.length) parts.push(c.thread.map(t => `${t.a || 'Comment'}: ${t.t}`).join('\n')); return parts.join('\n'); }
+  async function addSparks(buf, wb){ const z = await JSZip.loadAsync(buf); const wbx = await z.file('xl/workbook.xml').async('string'); const wrel = await z.file('xl/_rels/workbook.xml.rels').async('string');
+    const sheetPath = name => { const m = new RegExp(`<sheet [^>]*name="${xmlA(name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"[^>]*r:id="([^"]+)"`).exec(wbx); if (!m) return null; const t = new RegExp(`Id="${m[1]}"[^>]*Target="([^"]+)"|Target="([^"]+)"[^>]*Id="${m[1]}"`).exec(wrel); const tg = t[1] || t[2]; return tg.startsWith('/') ? tg.slice(1) : 'xl/' + tg.replace(/^\.\//, ''); };
+    for (const sh of wb.sheets){ const list = sh.sparks || []; if (!list.length) continue; const sp = sheetPath(sh.name); if (!sp || !z.file(sp)) continue; let x = await z.file(sp).async('string');
+      const groups = list.map(o => { const src = o.sheet ? (Calc.sheetOf(o.sheet) || sh) : sh; const col = 'FF' + String(o.color || '#1E7B47').replace('#', '').toUpperCase(); const type = o.type === 'column' ? ' type="column"' : o.type === 'winloss' ? ' type="stacked"' : '';
+        return `<x14:sparklineGroup displayEmptyCellsAs="gap"${type}${o.type === 'line' ? ' markers="0"' : ''} negative="1"><x14:colorSeries rgb="${col}"/><x14:colorNegative rgb="FFC00000"/><x14:colorAxis rgb="FF000000"/><x14:colorMarkers rgb="${col}"/><x14:colorFirst rgb="${col}"/><x14:colorLast rgb="${col}"/><x14:colorHigh rgb="${col}"/><x14:colorLow rgb="${col}"/><x14:sparklines><x14:sparkline><xm:f>${xmlA(quoteSheet(src.name) + '!' + rangeAddr(o.src))}</xm:f><xm:sqref>${addr(o.r, o.c)}</xm:sqref></x14:sparkline></x14:sparklines></x14:sparklineGroup>`; }).join('');
+      const ext = `<ext uri="{05C60535-1F16-4fd2-B633-F4F36F0B64E0}" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"><x14:sparklineGroups xmlns:xm="http://schemas.microsoft.com/office/excel/2006/main">${groups}</x14:sparklineGroups></ext>`;
+      x = /<extLst>/.test(x) ? x.replace('</extLst>', ext + '</extLst>') : x.replace('</worksheet>', `<extLst>${ext}</extLst></worksheet>`); z.file(sp, x); }
+    return z.generateAsync({type: 'arraybuffer', compression: 'DEFLATE'}); }
+  async function readSparks(buf, wb){ const z = await JSZip.loadAsync(buf); const wbx = await z.file('xl/workbook.xml').async('string'); const wrel = await z.file('xl/_rels/workbook.xml.rels').async('string');
+    for (const sh of wb.sheets){ const m = new RegExp(`<sheet [^>]*name="${xmlA(sh.name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"[^>]*r:id="([^"]+)"`).exec(wbx); if (!m) continue; const t = new RegExp(`Id="${m[1]}"[^>]*Target="([^"]+)"|Target="([^"]+)"[^>]*Id="${m[1]}"`).exec(wrel); if (!t) continue; const tg = t[1] || t[2]; const sp = tg.startsWith('/') ? tg.slice(1) : 'xl/' + tg.replace(/^\.\//, ''); const f = z.file(sp); if (!f) continue;
+      const x = await f.async('string'); if (!/sparklineGroup/.test(x)) continue; const out = [];
+      for (const gm of x.matchAll(/<x14:sparklineGroup\b([^>]*)>([\s\S]*?)<\/x14:sparklineGroup>/g)){ const at = gm[1], body = gm[2]; const type = /type="column"/.test(at) ? 'column' : /type="stacked"/.test(at) ? 'winloss' : 'line'; const cm = /colorSeries[^>]*rgb="(?:FF)?([0-9A-Fa-f]{6})"/.exec(body); const color = cm ? '#' + cm[1].toUpperCase() : '#1E7B47';
+        for (const sm of body.matchAll(/<xm:f>([^<]+)<\/xm:f>\s*<xm:sqref>([^<]+)<\/xm:sqref>/g)){ const ref = sm[1].replace(/&apos;/g, "'").replace(/&amp;/g, '&'); const mm = /^(?:'((?:[^']|'')+)'|([^!]+))!(.+)$/.exec(ref); const g = parseRange((mm ? mm[3] : ref).replace(/\$/g, '')); const at_ = parseAddr(sm[2].trim().split(/\s+/)[0]); if (!g || !at_) continue;
+          const srcName = mm ? (mm[1] || mm[2]).replace(/''/g, "'") : sh.name; out.push({id: uid(), r: at_.r, c: at_.c, src: g, sheet: srcName !== sh.name ? srcName : undefined, type, color}); } }
+      if (out.length) sh.sparks = out; } }
   async function addCharts(buf, wb){
     const z = await JSZip.loadAsync(buf); const ct = await z.file('[Content_Types].xml').async('string'); let ctx = ct; let chartN = 0;
     const wbx = await z.file('xl/workbook.xml').async('string'); const wrel = await z.file('xl/_rels/workbook.xml.rels').async('string');
@@ -213,11 +257,19 @@ const XIO = (() => {
       const sp = o.chart === 'line' ? `<c:spPr><a:ln w="28575" cap="rnd"><a:solidFill><a:srgbClr val="${pal[i % pal.length]}"/></a:solidFill><a:round/></a:ln></c:spPr><c:marker><c:symbol val="circle"/><c:size val="5"/><c:spPr><a:solidFill><a:srgbClr val="${pal[i % pal.length]}"/></a:solidFill></c:spPr></c:marker>` : pie ? '' : `<c:spPr><a:solidFill><a:srgbClr val="${pal[i % pal.length]}"/></a:solidFill></c:spPr>`;
       return `<c:ser><c:idx val="${i}"/><c:order val="${i}"/>${txRef ? `<c:tx><c:strRef><c:f>${xmlA(txRef)}</c:f>${strCache([s.name])}</c:strRef></c:tx>` : `<c:tx><c:v>${xmlA(s.name)}</c:v></c:tx>`}${sp}${fill}${o.labels ? `<c:dLbls><c:showLegendKey val="0"/><c:showVal val="${pie ? 0 : 1}"/><c:showCatName val="0"/><c:showSerName val="0"/><c:showPercent val="${pie ? 1 : 0}"/><c:showBubbleSize val="0"/></c:dLbls>` : ''}${d.c0 || d.byRows ? `<c:cat><c:strRef><c:f>${xmlA(catRef)}</c:f>${strCache(d.labels)}</c:strRef></c:cat>` : ''}<c:val><c:numRef><c:f>${xmlA(valRef)}</c:f>${numCache(s.values)}</c:numRef></c:val>${o.chart === 'line' ? '<c:smooth val="0"/>' : ''}</c:ser>`; }).join('');
     const axes = pie ? '' : `<c:axId val="500000001"/><c:axId val="500000002"/>`;
-    const body = o.chart === 'column' || o.chart === 'bar' ? `<c:barChart><c:barDir val="${o.chart === 'bar' ? 'bar' : 'col'}"/><c:grouping val="clustered"/><c:varyColors val="0"/>${sers}<c:gapWidth val="150"/>${axes}</c:barChart>`
+    const K = o.chart; const stack = {colStack: 'stacked', col100: 'percentStacked', barStack: 'stacked'}[K];
+    if (K === 'scatter'){ const xRef = d.byRows ? catRef : `${sn}!${A(g.r1 + d.h0, g.c1)}:${A(g.r2, g.c1)}`; const ss = d.series.map((x, i) => { const valRef = d.byRows ? `${sn}!${A(x.row, g.c1 + d.c0)}:${A(x.row, g.c2)}` : `${sn}!${A(g.r1 + d.h0, x.col)}:${A(g.r2, x.col)}`; return `<c:ser><c:idx val="${i}"/><c:order val="${i}"/><c:tx><c:v>${xmlA(x.name)}</c:v></c:tx><c:spPr><a:ln w="19050"><a:noFill/></a:ln></c:spPr><c:marker><c:symbol val="circle"/><c:size val="6"/><c:spPr><a:solidFill><a:srgbClr val="${pal[i % pal.length]}"/></a:solidFill></c:spPr></c:marker>${o.trend ? '<c:trendline><c:trendlineType val="linear"/></c:trendline>' : ''}<c:xVal><c:numRef><c:f>${xmlA(xRef)}</c:f>${numCache(d.labels.map(v => +v || 0))}</c:numRef></c:xVal><c:yVal><c:numRef><c:f>${xmlA(valRef)}</c:f>${numCache(x.values)}</c:numRef></c:yVal><c:smooth val="0"/></c:ser>`; }).join('');
+      const va = (id, cross, pos) => `<c:valAx><c:axId val="${id}"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="${pos}"/>${pos === 'l' ? '<c:majorGridlines/>' : ''}<c:numFmt formatCode="General" sourceLinked="1"/><c:majorTickMark val="none"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/><c:crossAx val="${cross}"/><c:crosses val="autoZero"/><c:crossBetween val="midCat"/></c:valAx>`;
+      const titleX = o.title ? `<c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>${xmlA(o.title)}</a:t></a:r></a:p></c:rich></c:tx><c:overlay val="0"/></c:title><c:autoTitleDeleted val="0"/>` : '<c:autoTitleDeleted val="1"/>';
+      return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><c:chart>${titleX}<c:plotArea><c:layout/><c:scatterChart><c:scatterStyle val="lineMarker"/><c:varyColors val="0"/>${ss}<c:axId val="500000001"/><c:axId val="500000002"/></c:scatterChart>${va(500000001, 500000002, 'b')}${va(500000002, 500000001, 'l')}</c:plotArea>${o.legend !== false ? '<c:legend><c:legendPos val="b"/><c:overlay val="0"/></c:legend>' : ''}<c:plotVisOnly val="1"/></c:chart></c:chartSpace>`; }
+    let body = K === 'column' || K === 'bar' || stack ? `<c:barChart><c:barDir val="${K === 'bar' || K === 'barStack' ? 'bar' : 'col'}"/><c:grouping val="${stack || 'clustered'}"/><c:varyColors val="0"/>${sers}<c:gapWidth val="${stack ? 60 : 150}"/>${stack ? '<c:overlap val="100"/>' : ''}${axes}</c:barChart>`
+      : K === 'areaStack' ? `<c:areaChart><c:grouping val="stacked"/><c:varyColors val="0"/>${sers}${axes}</c:areaChart>`
+      : K === 'radar' ? `<c:radarChart><c:radarStyle val="marker"/><c:varyColors val="0"/>${sers}${axes}</c:radarChart>`
+      : K === 'combo' ? (() => { const parts = sers.split('</c:ser>').filter(x => x).map(x => x + '</c:ser>'); const last = parts.pop() || ''; return `<c:barChart><c:barDir val="col"/><c:grouping val="clustered"/><c:varyColors val="0"/>${parts.join('')}<c:gapWidth val="150"/>${axes}</c:barChart><c:lineChart><c:grouping val="standard"/><c:varyColors val="0"/>${last}<c:marker val="1"/>${axes}</c:lineChart>`; })()
       : o.chart === 'line' ? `<c:lineChart><c:grouping val="standard"/><c:varyColors val="0"/>${sers}<c:marker val="1"/>${axes}</c:lineChart>`
       : o.chart === 'area' ? `<c:areaChart><c:grouping val="standard"/><c:varyColors val="0"/>${sers}${axes}</c:areaChart>`
       : o.chart === 'doughnut' ? `<c:doughnutChart><c:varyColors val="1"/>${sers}<c:firstSliceAng val="0"/><c:holeSize val="55"/></c:doughnutChart>` : `<c:pieChart><c:varyColors val="1"/>${sers}<c:firstSliceAng val="0"/></c:pieChart>`;
-    const ax = pie ? '' : `<c:catAx><c:axId val="500000001"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="${o.chart === 'bar' ? 'l' : 'b'}"/><c:numFmt formatCode="General" sourceLinked="1"/><c:majorTickMark val="none"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/><c:crossAx val="500000002"/><c:crosses val="autoZero"/><c:auto val="1"/><c:lblAlgn val="ctr"/><c:lblOffset val="100"/><c:noMultiLvlLbl val="0"/></c:catAx><c:valAx><c:axId val="500000002"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="${o.chart === 'bar' ? 'b' : 'l'}"/><c:majorGridlines><c:spPr><a:ln w="9525"><a:solidFill><a:srgbClr val="D9D9D9"/></a:solidFill></a:ln></c:spPr></c:majorGridlines><c:numFmt formatCode="General" sourceLinked="1"/><c:majorTickMark val="none"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/><c:crossAx val="500000001"/><c:crosses val="autoZero"/><c:crossBetween val="between"/></c:valAx>`;
+    const ax = pie ? '' : `<c:catAx><c:axId val="500000001"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="${/^bar/.test(o.chart) ? 'l' : 'b'}"/><c:numFmt formatCode="General" sourceLinked="1"/><c:majorTickMark val="none"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/><c:crossAx val="500000002"/><c:crosses val="autoZero"/><c:auto val="1"/><c:lblAlgn val="ctr"/><c:lblOffset val="100"/><c:noMultiLvlLbl val="0"/></c:catAx><c:valAx><c:axId val="500000002"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="${/^bar/.test(o.chart) ? 'b' : 'l'}"/><c:majorGridlines><c:spPr><a:ln w="9525"><a:solidFill><a:srgbClr val="D9D9D9"/></a:solidFill></a:ln></c:spPr></c:majorGridlines><c:numFmt formatCode="General" sourceLinked="1"/><c:majorTickMark val="none"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/><c:crossAx val="500000001"/><c:crosses val="autoZero"/><c:crossBetween val="between"/></c:valAx>`;
     const title = o.title ? `<c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="1400" b="0"/></a:pPr><a:r><a:rPr lang="en-US" sz="1400" b="0"/><a:t>${xmlA(o.title)}</a:t></a:r></a:p></c:rich></c:tx><c:overlay val="0"/></c:title><c:autoTitleDeleted val="0"/>` : '<c:autoTitleDeleted val="1"/>';
     return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><c:roundedCorners val="0"/><c:chart>${title}<c:plotArea><c:layout/>${body}${ax}</c:plotArea>${o.legend !== false ? '<c:legend><c:legendPos val="b"/><c:overlay val="0"/></c:legend>' : ''}<c:plotVisOnly val="1"/><c:dispBlanksAs val="gap"/></c:chart><c:spPr><a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill><a:ln w="9525"><a:solidFill><a:srgbClr val="D9D9D9"/></a:solidFill></a:ln></c:spPr></c:chartSpace>`;
   }

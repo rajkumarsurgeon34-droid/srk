@@ -7,23 +7,47 @@ const DEF_W = 72, DEF_H = 22;
 /* ---------------------------------------------------------------- calculation */
 const Calc = (() => {
   let wb = null; const cache = new Map(); const busy = new Set(); const bounds = new Map();
+  /* dynamic arrays: anchors that spill and the cells they cover */
+  const spillOf = new Map(); // 'sheetId:r,c' (covered cell) -> {anchor: 'r,c', v}
+  const anchors = new Map(); // 'sheetId:r,c' -> {r, c, rows, cols}
+  const prepared = new Set(); let preparing = null;
+  const ARRAY_HINT = /:|#|\{|\b(FILTER|SORT|SORTBY|UNIQUE|SEQUENCE|RANDARRAY|TRANSPOSE|VSTACK|HSTACK|TAKE|DROP|CHOOSECOLS|CHOOSEROWS|TOCOL|TOROW|WRAPROWS|WRAPCOLS|EXPAND|TEXTSPLIT|MAKEARRAY|MAP|SCAN|BYROW|BYCOL|LET|MMULT|MINVERSE|MUNIT|FREQUENCY|TREND|GROWTH|MODE\.MULT|GROUPBY|REGEXEXTRACT|INDEX|OFFSET|INDIRECT|IF|IFS|XLOOKUP)\s*\(/i;
   function attach(w){ wb = w; invalidate(); }
-  function invalidate(){ cache.clear(); bounds.clear(); }
+  function invalidate(){ cache.clear(); bounds.clear(); spillOf.clear(); anchors.clear(); prepared.clear(); }
   const sheetOf = name => wb.sheets.find(s => s.name.toLowerCase() === String(name).toLowerCase()) || null;
-  function lastRC(sh){ let b = bounds.get(sh.id); if (!b){ let R = 0, C = 0; for (const k in sh.cells){ const [r, c] = unkey(k); if (r > R) R = r; if (c > C) C = c; } b = {R, C}; bounds.set(sh.id, b); } return b; }
-  function nameRange(n){ const d = wb.names[n.toUpperCase()] || Object.entries(wb.names).find(([k]) => k.toUpperCase() === n.toUpperCase())?.[1]; if (!d) return null;
-    const m = /^(?:'((?:[^']|'')+)'|([^!]+))!(.+)$/.exec(d); const sh = m ? sheetOf((m[1] || m[2]).replace(/''/g, "'")) : wb.sheets[0]; const g = parseRange(m ? m[3].replace(/\$/g, '') : d.replace(/\$/g, '')); if (!sh || !g) return err(ERR.ref); return new Formula.Range(sh, g.r1, g.c1, g.r2, g.c2); }
-  function ctxFor(sh, r, c){ return {cur: sh, cell: {r, c}, get, sheetOf, names: nameRange, lastRow: s => lastRC(s).R, lastCol: s => lastRC(s).C, formulaAt: (s, r, c) => { const x = s.cells[key(r, c)]; return x && x.f; }}; }
+  function prepare(sh){ if (prepared.has(sh.id) || preparing === sh.id) return; prepared.add(sh.id); const prev = preparing; preparing = sh.id;
+    try { for (const k in sh.cells){ const x = sh.cells[k]; if (x.f != null && ARRAY_HINT.test(x.f)){ const [r, c] = unkey(k); get(sh, r, c); } } } finally { preparing = prev; bounds.delete(sh.id); } }
+  function lastRC(sh){ let b = bounds.get(sh.id); if (!b){ let R = 0, C = 0; for (const k in sh.cells){ const [r, c] = unkey(k); if (r > R) R = r; if (c > C) C = c; }
+      if (preparing !== sh.id && (prepared.has(sh.id) || !busy.size)){ prepare(sh); for (const [id, a] of anchors) if (id.startsWith(sh.id + ':')){ R = Math.max(R, a.r + a.rows - 1); C = Math.max(C, a.c + a.cols - 1); } b = {R, C}; bounds.set(sh.id, b); } else { for (const [id, a] of anchors) if (id.startsWith(sh.id + ':')){ R = Math.max(R, a.r + a.rows - 1); C = Math.max(C, a.c + a.cols - 1); } b = {R, C}; } }
+    return b; }
+  function nameRange(n){ const d = wb.names[n.toUpperCase()] ?? Object.entries(wb.names).find(([k]) => k.toUpperCase() === n.toUpperCase())?.[1]; if (d == null) return null;
+    const m = /^(?:'((?:[^']|'')+)'|([^!]+))!(\$?[A-Za-z]{1,3}\$?\d+(?::\$?[A-Za-z]{1,3}\$?\d+)?)$/.exec(d);
+    if (m){ const sh = sheetOf((m[1] || m[2]).replace(/''/g, "'")); const g = parseRange(m[3].replace(/\$/g, '')); if (!sh || !g) return err(ERR.ref); return new Formula.Range(sh, g.r1, g.c1, g.r2, g.c2); }
+    const g = parseRange(String(d).replace(/\$/g, '')); if (g) return new Formula.Range(wb.sheets[0], g.r1, g.c1, g.r2, g.c2);
+    // a formula or LAMBDA kept as a name
+    const id = 'name:' + n.toUpperCase(); if (busy.has(id)) return err(ERR.circ); busy.add(id); try { return Formula.evaluateNamed(String(d).replace(/^=/, ''), ctxFor(wb.sheets[0], 0, 0)); } finally { busy.delete(id); } }
+  function spillRange(sh, r, c){ get(sh, r, c); const a = anchors.get(sh.id + ':' + r + ',' + c); if (a) return new Formula.Range(sh, r, c, r + a.rows - 1, c + a.cols - 1); const x = sh.cells[key(r, c)]; if (x && x.f != null) return new Formula.Range(sh, r, c, r, c); return null; }
+  function ctxFor(sh, r, c){ return {cur: sh, cell: {r, c}, get, sheetOf, names: nameRange, spillRange, sheets: () => wb.sheets, lastRow: s => lastRC(s).R, lastCol: s => lastRC(s).C, formulaAt: (s, r, c) => { const x = s.cells[key(r, c)]; return x && x.f; }}; }
+  function spilledValue(sh, r, c){ if (!prepared.has(sh.id)) prepare(sh); const e = spillOf.get(sh.id + ':' + r + ',' + c); return e ? e.v : undefined; }
   function get(sh, r, c){
-    const cell = sh.cells[key(r, c)]; if (!cell) return null; if (cell.f == null) return cell.v ?? null;
+    const cell = sh.cells[key(r, c)];
+    if (!cell || (cell.f == null && cell.v == null)){ const sv = spilledValue(sh, r, c); return sv === undefined ? (cell ? cell.v ?? null : null) : sv; }
+    if (cell.f == null) return cell.v ?? null;
     const id = sh.id + ':' + r + ',' + c; if (cache.has(id)) return cache.get(id);
+    if (!busy.size && !prepared.has(sh.id) && preparing !== sh.id){ prepare(sh); if (cache.has(id)) return cache.get(id); }
     if (busy.has(id)) return err(ERR.circ);
-    busy.add(id); let v; try { v = Formula.evaluate(cell.f, ctxFor(sh, r, c)); } catch(e){ v = err(ERR.value); } busy.delete(id);
+    busy.add(id); let v; try { v = Formula.evaluateRaw(cell.f, ctxFor(sh, r, c)); } catch(e){ v = err(ERR.value); } busy.delete(id);
+    if (v instanceof Formula.Arr){ const R = v.rows, C = v.cols; let blocked = r + R > MAXR || c + C > MAXC;
+      for (let i = 0; i < R && !blocked; i++) for (let j = 0; j < C; j++){ if (!i && !j) continue; const x = sh.cells[key(r + i, c + j)]; const other = spillOf.get(sh.id + ':' + (r + i) + ',' + (c + j)); if ((x && (x.v != null || x.f != null)) || (other && other.anchor !== r + ',' + c)){ blocked = true; break; } }
+      if (blocked) v = err(ERR.spill);
+      else { anchors.set(id, {r, c, rows: R, cols: C}); bounds.delete(sh.id); for (let i = 0; i < R; i++) for (let j = 0; j < C; j++) if (i || j){ let w = v.a[i][j]; if (w == null) w = 0; spillOf.set(sh.id + ':' + (r + i) + ',' + (c + j), {anchor: r + ',' + c, v: w}); } v = v.a[0][0]; if (v == null) v = 0; } }
     if (typeof v === 'number' && !isFinite(v)) v = err(ERR.num);
     cache.set(id, v); return v;
   }
+  function spillInfo(sh, r, c){ // the spill block that covers (r, c), if any
+    if (!prepared.has(sh.id)) prepare(sh); const own = anchors.get(sh.id + ':' + r + ',' + c); if (own) return own; const e = spillOf.get(sh.id + ':' + r + ',' + c); if (!e) return null; return anchors.get(sh.id + ':' + e.anchor) || null; }
   function evalIn(sh, f, r = 0, c = 0){ try { return Formula.evaluate(f, ctxFor(sh, r, c)); } catch(e){ return err(ERR.value); } }
-  return {attach, invalidate, get, evalIn, lastRC, sheetOf, get wb(){ return wb; }};
+  return {attach, invalidate, get, evalIn, lastRC, sheetOf, spillInfo, spilledValue, get wb(){ return wb; }};
 })();
 
 /* ---------------------------------------------------------------- cell helpers */
@@ -31,13 +55,14 @@ const cellAt = (sh, r, c) => sh.cells[key(r, c)];
 const valueAt = (sh, r, c) => Calc.get(sh, r, c);
 function styleAt(sh, r, c){ const x = cellAt(sh, r, c); return (x && x.s) || null; }
 function displayAt(sh, r, c, showFormulas){
-  const x = cellAt(sh, r, c); if (!x) return {text: ''};
+  const x = cellAt(sh, r, c);
+  if (!x || (x.f == null && x.v == null)){ const sv = Calc.spilledValue(sh, r, c); if (sv === undefined) return {text: ''}; if (showFormulas) return {text: ''}; const d = formatValue(sv, x && x.s && x.s.nf); if (typeof sv === 'string' && !d.align) d.align = 'left'; return d; }
   if (showFormulas && x.f != null) return {text: '=' + x.f, align: 'left'};
   const v = Calc.get(sh, r, c), s = x.s || {};
   const d = formatValue(v, s.nf); if (typeof v === 'string' && !d.align) d.align = 'left'; return d;
 }
 /* text shown in the formula bar / editor */
-function editText(sh, r, c){ const x = cellAt(sh, r, c); if (!x) return ''; if (x.f != null) return '=' + x.f; const v = x.v; if (v == null) return ''; if (isErr(v)) return v.e; if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';
+function editText(sh, r, c){ const x = cellAt(sh, r, c); if (!x || (x.f == null && x.v == null)){ const sp = Calc.spillInfo(sh, r, c); if (sp && (sp.r !== r || sp.c !== c)){ const a = cellAt(sh, sp.r, sp.c); return a && a.f != null ? '=' + a.f : ''; } if (!x) return ''; } if (x.f != null) return '=' + x.f; const v = x.v; if (v == null) return ''; if (isErr(v)) return v.e; if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';
   if (typeof v === 'number'){ const nf = x.s && x.s.nf; if (nf && isDateFmt(nf)){ const hasTime = v % 1 !== 0, hasDate = v >= 1; return formatValue(v, (hasDate ? (DMY ? 'dd/mm/yyyy' : 'm/d/yyyy') : '') + (hasDate && hasTime ? ' ' : '') + (hasTime ? 'h:mm:ss' : '')).text.trim(); } if (nf && /%/.test(nf)) return generalNum(v * 100) + '%'; return generalNum(v); }
   return (x.s && x.s.nf === '@') || (typeof v === 'string' && typeof parseInput(v).v !== 'string') ? (typeof v === 'string' && x.text ? "'" : '') + v : v; }
 function mergeAt(sh, r, c){ for (const m of sh.merges) if (inRange(m, r, c)) return m; return null; }
@@ -169,6 +194,7 @@ function removeDuplicates(sh, g, cols, header){ const seen = new Set(); const ke
   return removed; }
 
 /* ---------------------------------------------------------------- conditional formatting */
+const ICON_SETS = {arrows: [['▲', '#00B050'], ['▶', '#FFC000'], ['▼', '#C00000']], traffic: [['●', '#00B050'], ['●', '#FFC000'], ['●', '#C00000']], flags: [['⚑', '#00B050'], ['⚑', '#FFC000'], ['⚑', '#C00000']], stars: [['★', '#FFC000'], ['⯪', '#FFC000'], ['☆', '#A5A5A5']], checks: [['✔', '#00B050'], ['!', '#FFC000'], ['✖', '#C00000']], quarters: [['●', '#404040'], ['◕', '#404040'], ['◑', '#404040'], ['◔', '#404040']]};
 function cfStyleFor(sh, r, c, cache){
   let out = null;
   for (const rule of sh.cf){ if (!inRange(rule.range, r, c)) continue; const v = Calc.get(sh, r, c); let hit = false;
@@ -179,12 +205,13 @@ function cfStyleFor(sh, r, c, cache){
       case 'text': hit = typeof v === 'string' && v.toLowerCase().includes(String(rule.v1).toLowerCase()); break;
       case 'blank': hit = v == null || v === ''; break;
       case 'dup': case 'unique': { const k = 'dup' + sh.cf.indexOf(rule); let m = cache[k]; if (!m){ m = new Map(); forRange(clampToUsed(sh, rule.range), (rr, cc) => { const x = Calc.get(sh, rr, cc); if (x == null || x === '') return; const kk = typeof x === 'string' ? x.toLowerCase() : String(x); m.set(kk, (m.get(kk) || 0) + 1); }); cache[k] = m; } if (v != null && v !== ''){ const n = m.get(typeof v === 'string' ? v.toLowerCase() : String(v)); hit = rule.type === 'dup' ? n > 1 : n === 1; } break; }
-      case 'top': case 'bottom': case 'above': case 'below': case 'databar': case 'scale2': case 'scale3': {
+      case 'top': case 'bottom': case 'above': case 'below': case 'databar': case 'scale2': case 'scale3': case 'icons': {
         const k = 'n' + sh.cf.indexOf(rule); let ns = cache[k]; if (!ns){ ns = []; forRange(clampToUsed(sh, rule.range), (rr, cc) => { const x = Calc.get(sh, rr, cc); if (typeof x === 'number') ns.push(x); }); ns.sort((a, b) => a - b); cache[k] = ns; }
         if (typeof v !== 'number' || !ns.length) break; const mn = ns[0], mx = ns[ns.length - 1];
         if (rule.type === 'top'){ const n = rule.pct ? Math.max(1, Math.round(ns.length * (+rule.v1 || 10) / 100)) : (+rule.v1 || 10); hit = v >= ns[Math.max(0, ns.length - n)]; }
         else if (rule.type === 'bottom'){ const n = rule.pct ? Math.max(1, Math.round(ns.length * (+rule.v1 || 10) / 100)) : (+rule.v1 || 10); hit = v <= ns[Math.min(ns.length - 1, n - 1)]; }
         else if (rule.type === 'above' || rule.type === 'below'){ const avg = ns.reduce((a, b) => a + b, 0) / ns.length; hit = rule.type === 'above' ? v > avg : v < avg; }
+        else if (rule.type === 'icons'){ const t = mx === mn ? 1 : (v - mn) / (mx - mn); const set = ICON_SETS[rule.set || 'arrows'] || ICON_SETS.arrows; const i = set.length === 4 ? (t >= .75 ? 0 : t >= .5 ? 1 : t >= .25 ? 2 : 3) : (t >= 2 / 3 ? 0 : t >= 1 / 3 ? 1 : 2); out = {...(out || {}), icon: set[i]}; continue; }
         else if (rule.type === 'databar'){ out = {...(out || {}), bar: {pct: mx === mn ? 1 : Math.max(0.03, (v - Math.min(0, mn)) / (mx - Math.min(0, mn))), color: rule.color || '#638EC6'}}; continue; }
         else { const t = mx === mn ? 0.5 : (v - mn) / (mx - mn); const cs = rule.colors || (rule.type === 'scale2' ? ['#FFFFFF', '#63BE7B'] : ['#F8696B', '#FFEB84', '#63BE7B']); const col = cs.length === 2 ? mix(cs[0], cs[1], t) : t < .5 ? mix(cs[0], cs[1], t * 2) : mix(cs[1], cs[2], (t - .5) * 2); out = {...(out || {}), fill: col}; continue; }
         break; }

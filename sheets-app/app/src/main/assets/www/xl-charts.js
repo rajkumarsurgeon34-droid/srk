@@ -1,7 +1,7 @@
 /* SRK Sheets — charts and pictures floating over the grid */
 'use strict';
 const tint = (c, t) => mix(c, '#FFFFFF', t), shade = (c, t) => mix(c, '#000000', t), isDark = isDarkC, fontStack = fontCss;
-const CHART_TYPES = [['column', 'Column'], ['bar', 'Bar'], ['line', 'Line'], ['area', 'Area'], ['pie', 'Pie'], ['doughnut', 'Doughnut']];
+const CHART_TYPES = [['column', 'Column'], ['colStack', 'Stacked column'], ['col100', '100% column'], ['bar', 'Bar'], ['barStack', 'Stacked bar'], ['line', 'Line'], ['area', 'Area'], ['areaStack', 'Stacked area'], ['pie', 'Pie'], ['doughnut', 'Doughnut'], ['scatter', 'Scatter (XY)'], ['combo', 'Column + line'], ['radar', 'Radar']];
 function chartPalette(th){ const a = th.accent, b = th.accent2 || '#ED7D31'; return [a, b, mix(a, b, .5), shade(a, .35), tint(b, .35), '#A5A5A5', tint(a, .45), shade(b, .3)]; }
 function newChartData(type){
   return type === 'pie' || type === 'doughnut'
@@ -13,6 +13,49 @@ const fmtNum = v => Math.abs(v) >= 1000 ? (Math.round(v / 100) / 10) + 'k' : Str
 const xmlEsc = s => String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
 /* SVG markup for a chart object, in slide points */
 function chartSvg(o, th){
+  const kind = o.chart; if (kind === 'scatter') return scatterSvg(o, th); if (kind === 'radar') return radarSvg(o, th);
+  if (/Stack$|^col100$/.test(kind) || kind === 'combo') return stackSvg(o, th);
+  return chartSvg0(o, th); }
+function svgHead(o, th){ const W = Math.max(o.w, 40), H = Math.max(o.h, 30), fs = o.fontSize || 12; return {W, H, fs, ink: th.text, grid: isDark(th.bg) ? 'rgba(255,255,255,.18)' : 'rgba(0,0,0,.12)', pal: o.colors && o.colors.length ? o.colors : chartPalette(th), font: fontStack(th.body)}; }
+function svgFrame(o, th, names){ const {W, H, fs, ink, pal, font} = svgHead(o, th); let s = `<svg class="chart" viewBox="0 0 ${W} ${H}" width="100%" height="100%" font-family="${font.replace(/"/g, "'")}" font-size="${fs}" fill="${ink}">`; let top = 6, bottom = H - 6;
+  if (o.title){ s += `<text x="${W / 2}" y="${top + fs * 1.3}" text-anchor="middle" font-size="${fs * 1.4}" font-weight="600">${xmlEsc(o.title)}</text>`; top += fs * 2; }
+  if (o.legend !== false && names.length){ let x = 0; const items = names.map((n, i) => { const w = 14 + String(n).length * fs * 0.55 + 14; const it = {n, i, x, w}; x += w; return it; }); const off = Math.max(8, (W - x) / 2);
+    for (const it of items) s += `<rect x="${off + it.x}" y="${bottom - fs}" width="${fs * .8}" height="${fs * .8}" fill="${pal[it.i % pal.length]}"/><text x="${off + it.x + fs * 1.1}" y="${bottom - fs * .25}">${xmlEsc(it.n)}</text>`; bottom -= fs * 2; }
+  return {s, top, bottom}; }
+function axisSteps(mn, mx){ if (mx === mn) mx = mn + 1; const step = niceNum(niceNum(mx - mn, false) / 5, true); return {mn: Math.floor(mn / step) * step, mx: Math.ceil(mx / step) * step, step}; }
+function stackSvg(o, th){ const d = o.data || newChartData('column'); const {W, fs, ink, grid, pal} = svgHead(o, th); const kind = o.chart; const horiz = kind === 'barStack', pct = kind === 'col100', area = kind === 'areaStack', combo = kind === 'combo';
+  let {s, top, bottom} = svgFrame(o, th, d.series.map(x => x.name)); const n = d.labels.length || 1;
+  const barSer = combo ? d.series.slice(0, Math.max(1, d.series.length - 1)) : d.series, lineSer = combo && d.series.length > 1 ? [d.series[d.series.length - 1]] : [];
+  const tot = d.labels.map((_, i) => barSer.reduce((a, x) => a + Math.abs(+x.values[i] || 0), 0));
+  let mx = 0, mn = 0; d.labels.forEach((_, i) => { let p = 0, q = 0; for (const x of barSer){ let v = +x.values[i] || 0; if (pct) v = tot[i] ? v / tot[i] * 100 : 0; if (combo) { mx = Math.max(mx, v); mn = Math.min(mn, v); continue; } if (v >= 0) p += v; else q += v; } if (!combo){ mx = Math.max(mx, p); mn = Math.min(mn, q); } for (const x of lineSer){ mx = Math.max(mx, +x.values[i] || 0); mn = Math.min(mn, +x.values[i] || 0); } });
+  if (pct) mx = 100; const ax = axisSteps(mn, mx); mn = ax.mn; mx = ax.mx; const fmt = v => pct ? Math.round(v) + '%' : fmtNum(v);
+  const labW = Math.max(...d.labels.map(l => String(l).length)) * fs * 0.55 + 6, valW = Math.max(fmt(mx).length, fmt(mn).length) * fs * 0.6 + 8; const L = 8, R = W - 8;
+  const pl = L + (horiz ? labW : valW), pr = R - 4, pt = top + 4, pb = bottom - fs * 1.6; const vy = v => pb - (v - mn) / (mx - mn) * (pb - pt), vx = v => pl + (v - mn) / (mx - mn) * (pr - pl);
+  for (let v = mn; v <= mx + ax.step / 2; v += ax.step){ if (horiz){ const x = vx(v); s += `<line x1="${x}" y1="${pt}" x2="${x}" y2="${pb}" stroke="${grid}"/><text x="${x}" y="${pb + fs * 1.2}" text-anchor="middle" fill-opacity=".8">${fmt(v)}</text>`; } else { const y = vy(v); s += `<line x1="${pl}" y1="${y}" x2="${pr}" y2="${y}" stroke="${grid}"/><text x="${pl - 5}" y="${y + fs * .35}" text-anchor="end" fill-opacity=".8">${fmt(v)}</text>`; } }
+  const band = (horiz ? pb - pt : pr - pl) / n; d.labels.forEach((lab, i) => { s += horiz ? `<text x="${pl - 5}" y="${pt + band * (i + .5) + fs * .35}" text-anchor="end">${xmlEsc(lab)}</text>` : `<text x="${pl + band * (i + .5)}" y="${pb + fs * 1.2}" text-anchor="middle">${xmlEsc(lab)}</text>`; });
+  if (area){ let base = d.labels.map(() => 0); barSer.forEach((x, si) => { const top_ = d.labels.map((_, i) => base[i] + (+x.values[i] || 0)); const P = (arr) => arr.map((v, i) => `${(pl + band * (i + .5)).toFixed(1)} ${vy(v).toFixed(1)}`); s += `<path d="M${P(top_).join('L')}L${P(base).reverse().join('L')}Z" fill="${pal[si % pal.length]}" fill-opacity=".8"/>`; base = top_; }); }
+  else if (combo){ const gw = band * 0.72, bw = gw / barSer.length; barSer.forEach((x, si) => d.labels.forEach((_, i) => { const v = +x.values[i] || 0, X = pl + band * i + (band - gw) / 2 + bw * si; s += `<rect x="${X.toFixed(1)}" y="${Math.min(vy(v), vy(0)).toFixed(1)}" width="${(bw * .92).toFixed(1)}" height="${Math.abs(vy(v) - vy(0)).toFixed(1)}" fill="${pal[si % pal.length]}"/>`; }));
+    lineSer.forEach(x => { const c = pal[(d.series.length - 1) % pal.length]; const pts = d.labels.map((_, i) => [pl + band * (i + .5), vy(+x.values[i] || 0)]); s += `<polyline points="${pts.map(p => p.map(v => v.toFixed(1)).join(',')).join(' ')}" fill="none" stroke="${c}" stroke-width="2.5"/>` + pts.map(p => `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="3.5" fill="${c}"/>`).join(''); }); }
+  else { const gw = band * 0.62; d.labels.forEach((_, i) => { let p = 0, q = 0; barSer.forEach((x, si) => { let v = +x.values[i] || 0; if (pct) v = tot[i] ? v / tot[i] * 100 : 0; const a = v >= 0 ? p : q, b = a + v; if (v >= 0) p = b; else q = b; const c = pal[si % pal.length];
+      if (horiz){ const y = pt + band * i + (band - gw) / 2; s += `<rect x="${Math.min(vx(a), vx(b)).toFixed(1)}" y="${y.toFixed(1)}" width="${Math.abs(vx(b) - vx(a)).toFixed(1)}" height="${gw.toFixed(1)}" fill="${c}"/>`; if (o.labels && v) s += `<text x="${((vx(a) + vx(b)) / 2).toFixed(1)}" y="${(y + gw / 2 + fs * .35).toFixed(1)}" text-anchor="middle" fill="#fff" font-size="${fs * .85}">${fmt(v)}</text>`; }
+      else { const X = pl + band * i + (band - gw) / 2; s += `<rect x="${X.toFixed(1)}" y="${Math.min(vy(a), vy(b)).toFixed(1)}" width="${gw.toFixed(1)}" height="${Math.abs(vy(b) - vy(a)).toFixed(1)}" fill="${c}"/>`; if (o.labels && v) s += `<text x="${(X + gw / 2).toFixed(1)}" y="${((vy(a) + vy(b)) / 2 + fs * .35).toFixed(1)}" text-anchor="middle" fill="#fff" font-size="${fs * .85}">${fmt(v)}</text>`; } }); }); }
+  s += horiz ? '' : `<line x1="${pl}" y1="${vy(Math.max(mn, 0))}" x2="${pr}" y2="${vy(Math.max(mn, 0))}" stroke="${ink}" stroke-opacity=".5"/>`; return s + '</svg>'; }
+function scatterSvg(o, th){ const d = o.data || {labels: [1, 2, 3, 4], series: [{name: 'Y', values: [2, 3, 5, 4]}]}; const {W, fs, ink, grid, pal} = svgHead(o, th); let {s, top, bottom} = svgFrame(o, th, d.series.map(x => x.name));
+  const xs = d.labels.map(v => +v || 0), ys = d.series.flatMap(x => x.values.map(v => +v || 0)); const ax = axisSteps(Math.min(0, ...xs), Math.max(...xs)), ay = axisSteps(Math.min(0, ...ys), Math.max(...ys));
+  const valW = Math.max(fmtNum(ay.mx).length, fmtNum(ay.mn).length) * fs * 0.6 + 8; const pl = 8 + valW, pr = W - 12, pt = top + 4, pb = bottom - fs * 1.6; const X = v => pl + (v - ax.mn) / (ax.mx - ax.mn) * (pr - pl), Y = v => pb - (v - ay.mn) / (ay.mx - ay.mn) * (pb - pt);
+  for (let v = ay.mn; v <= ay.mx + ay.step / 2; v += ay.step) s += `<line x1="${pl}" y1="${Y(v)}" x2="${pr}" y2="${Y(v)}" stroke="${grid}"/><text x="${pl - 5}" y="${Y(v) + fs * .35}" text-anchor="end" fill-opacity=".8">${fmtNum(v)}</text>`;
+  for (let v = ax.mn; v <= ax.mx + ax.step / 2; v += ax.step) s += `<line x1="${X(v)}" y1="${pt}" x2="${X(v)}" y2="${pb}" stroke="${grid}"/><text x="${X(v)}" y="${pb + fs * 1.2}" text-anchor="middle" fill-opacity=".8">${fmtNum(v)}</text>`;
+  d.series.forEach((ser, si) => { const c = pal[si % pal.length]; ser.values.forEach((v, i) => { s += `<circle cx="${X(xs[i]).toFixed(1)}" cy="${Y(+v || 0).toFixed(1)}" r="4" fill="${c}"/>`; if (o.labels) s += `<text x="${X(xs[i]).toFixed(1)}" y="${(Y(+v || 0) - 7).toFixed(1)}" text-anchor="middle" font-size="${fs * .85}">${fmtNum(+v || 0)}</text>`; });
+    if (o.trend){ const n = xs.length, mx_ = xs.reduce((a, b) => a + b, 0) / n, my = ser.values.reduce((a, b) => a + (+b || 0), 0) / n; let sxy = 0, sxx = 0; xs.forEach((x, i) => { sxy += (x - mx_) * ((+ser.values[i] || 0) - my); sxx += (x - mx_) ** 2; }); const b = sxx ? sxy / sxx : 0, a = my - b * mx_; s += `<line x1="${X(ax.mn)}" y1="${Y(a + b * ax.mn)}" x2="${X(ax.mx)}" y2="${Y(a + b * ax.mx)}" stroke="${c}" stroke-dasharray="5 4" stroke-width="1.5"/>`; } });
+  s += `<line x1="${pl}" y1="${Y(Math.max(ay.mn, 0))}" x2="${pr}" y2="${Y(Math.max(ay.mn, 0))}" stroke="${ink}" stroke-opacity=".5"/>`; return s + '</svg>'; }
+function radarSvg(o, th){ const d = o.data || newChartData('column'); const {W, fs, grid, pal} = svgHead(o, th); let {s, top, bottom} = svgFrame(o, th, d.series.map(x => x.name)); const n = d.labels.length || 1;
+  const cx = W / 2, cy = (top + bottom) / 2, R = Math.max(10, Math.min(W / 2 - 40, (bottom - top) / 2 - fs)); const all = d.series.flatMap(x => x.values.map(v => +v || 0)); const ax = axisSteps(0, Math.max(...all, 1));
+  const P = (i, v) => { const a = -Math.PI / 2 + i / n * Math.PI * 2, r = v / ax.mx * R; return [cx + Math.cos(a) * r, cy + Math.sin(a) * r]; };
+  for (let v = ax.step; v <= ax.mx + 1e-9; v += ax.step) s += `<polygon points="${d.labels.map((_, i) => P(i, v).map(q => q.toFixed(1)).join(',')).join(' ')}" fill="none" stroke="${grid}"/>`;
+  d.labels.forEach((l, i) => { const [x, y] = P(i, ax.mx); s += `<line x1="${cx}" y1="${cy}" x2="${x}" y2="${y}" stroke="${grid}"/>`; const [lx, ly] = P(i, ax.mx * 1.12); s += `<text x="${lx.toFixed(1)}" y="${(ly + fs * .35).toFixed(1)}" text-anchor="middle">${xmlEsc(l)}</text>`; });
+  d.series.forEach((ser, si) => { const c = pal[si % pal.length]; s += `<polygon points="${d.labels.map((_, i) => P(i, +ser.values[i] || 0).map(q => q.toFixed(1)).join(',')).join(' ')}" fill="${c}" fill-opacity=".18" stroke="${c}" stroke-width="2"/>`; });
+  return s + '</svg>'; }
+function chartSvg0(o, th){
   const W = Math.max(o.w, 40), H = Math.max(o.h, 30), d = o.data || newChartData(o.chart), pal = o.colors && o.colors.length ? o.colors : chartPalette(th);
   const ink = th.text, grid = isDark(th.bg) ? 'rgba(255,255,255,.18)' : 'rgba(0,0,0,.12)', fs = o.fontSize || 12, font = fontStack(th.body);
   let s = `<svg class="chart" viewBox="0 0 ${W} ${H}" width="100%" height="100%" font-family="${font.replace(/"/g, "'")}" font-size="${fs}" fill="${ink}">`;
@@ -81,13 +124,13 @@ function chartData(sh, o){
 const Objects = (() => {
   const $ = s => document.querySelector(s); const G = () => Grid.G;
   function pos(o){ const z = Grid.z(); return {x: Grid.hw() + (Grid.colLeft[o.c] ?? 0) + (o.dx || 0) * z, y: Grid.hh() + (Grid.rowTop[o.r] ?? 0) + (o.dy || 0) * z, w: o.w * z, h: o.h * z}; }
-  function render(){ const sh = G().sh; const main = $('#gmain'); if (!main) return; let html = '';
-    for (const o of [...sh.images, ...sh.charts]){ const p = pos(o); const sel = G().objSel === o.id;
-      const inner = o.chart ? chartSvg({...o, w: p.w, h: p.h, data: chartData(sh, o), fontSize: Math.max(8, 11 * Grid.z()), colors: o.colors || XL_COLORS}, CHART_TH) : `<img src="${mediaOf(o.src)}" alt="" draggable="false">`;
-      html += `<div class="obj${o.chart ? ' chart' : ' pic'}${sel ? ' on' : ''}" data-oid="${o.id}" style="left:${p.x}px;top:${p.y}px;width:${p.w}px;height:${p.h}px">${inner}${sel ? '<i class="oh" data-h="nw"></i><i class="oh" data-h="ne"></i><i class="oh" data-h="sw"></i><i class="oh" data-h="se"></i>' : ''}</div>`; }
+  function render(){ const sh = G().sh; const main = $('#gmain'); if (!main) return; let html = (typeof More !== 'undefined') ? More.layerHTML(sh) : '';
+    for (const o of [...sh.images, ...(sh.shapes || []), ...sh.charts]){ const p = pos(o); const sel = G().objSel === o.id;
+      const inner = o.shape ? More.shapeSvg(o, p.w, p.h) : o.chart ? chartSvg({...o, w: p.w, h: p.h, data: chartData(sh, o), fontSize: Math.max(8, 11 * Grid.z()), colors: o.colors || XL_COLORS}, CHART_TH) : `<img src="${mediaOf(o.src)}" alt="" draggable="false">`;
+      html += `<div class="obj${o.chart ? ' chart' : o.shape ? ' shp' : ' pic'}${sel ? ' on' : ''}" data-oid="${o.id}" style="left:${p.x}px;top:${p.y}px;width:${p.w}px;height:${p.h}px">${inner}${sel ? '<i class="oh" data-h="nw"></i><i class="oh" data-h="ne"></i><i class="oh" data-h="sw"></i><i class="oh" data-h="se"></i>' : ''}</div>`; }
     let L = main.querySelector('.objs'); if (!L){ L = document.createElement('div'); L.className = 'objs'; main.appendChild(L); } L.innerHTML = html; }
   const mediaOf = src => src && src.startsWith('m:') ? (G().wb.media || {})[src.slice(2)] || '' : src || '';
-  const find = id => { const sh = G().sh; return sh.charts.find(o => o.id === id) || sh.images.find(o => o.id === id); };
+  const find = id => { const sh = G().sh; return sh.charts.find(o => o.id === id) || sh.images.find(o => o.id === id) || (sh.shapes || []).find(o => o.id === id); };
   let drag = null;
   function down(e){ e.preventDefault(); e.stopPropagation(); const el = e.target.closest('.obj'); const o = find(el.dataset.oid); if (!o) return; if (Grid.G.edit) Grid.commitEdit();
     const was = G().objSel === o.id; G().objSel = o.id; const h = e.target.closest('.oh'); drag = {o, mode: h ? h.dataset.h : 'move', x: e.clientX, y: e.clientY, p0: pos(o), was, moved: false};
@@ -97,9 +140,9 @@ const Objects = (() => {
     w = Math.max(30, w); hgt = Math.max(24, hgt); place(o, x, y, w / z, hgt / z); render(); }
   function place(o, x, y, w, h){ const z = Grid.z(); x = Math.max(Grid.hw(), x); y = Math.max(Grid.hh(), y); const gx = x - Grid.hw(), gy = y - Grid.hh(); const cl = Grid.colLeft, rt = Grid.rowTop;
     let c = 0; while (c + 1 < cl.length && cl[c + 1] <= gx) c++; let r = 0; while (r + 1 < rt.length && rt[r + 1] <= gy) r++; o.c = c; o.r = r; o.dx = (gx - cl[c]) / z; o.dy = (gy - rt[r]) / z; o.w = Math.round(w); o.h = Math.round(h); }
-  function up(){ document.removeEventListener('pointermove', move); const d = drag; drag = null; if (!d) return; if (d.moved){ if (G().onChange) G().onChange(); } else if (d.was && d.o.chart && G().onChartTap) G().onChartTap(d.o); }
+  function up(){ document.removeEventListener('pointermove', move); const d = drag; drag = null; if (!d) return; if (d.moved){ if (G().onChange) G().onChange(); } else if (d.was && d.o.chart && G().onChartTap) G().onChartTap(d.o); else if (d.was && d.o.shape && (typeof More !== 'undefined')) More.editShape(d.o); }
   function deselect(){ G().objSel = null; render(); }
-  function add(list, o){ const sh = G().sh; const g = G().sel.g; o.id = uid(); o.r = Math.min(g.r1, Grid.NR - 1); o.c = Math.min(g.c2 + 1, Grid.NC - 1); o.dx = 8; o.dy = 0; sh[list].push(o); G().objSel = o.id; render(); if (G().onObj) G().onObj(o); if (G().onChange) G().onChange(); }
-  function remove(id){ const sh = G().sh; sh.charts = sh.charts.filter(o => o.id !== id); sh.images = sh.images.filter(o => o.id !== id); G().objSel = null; render(); if (G().onChange) G().onChange(); }
+  function add(list, o){ const sh = G().sh; const g = G().sel.g; o.id = uid(); o.r = Math.min(g.r1, Grid.NR - 1); o.c = Math.min(g.c2 + 1, Grid.NC - 1); o.dx = 8; o.dy = 0; (sh[list] = sh[list] || []).push(o); G().objSel = o.id; render(); if (G().onObj) G().onObj(o); if (G().onChange) G().onChange(); }
+  function remove(id){ const sh = G().sh; sh.charts = sh.charts.filter(o => o.id !== id); sh.images = sh.images.filter(o => o.id !== id); if (sh.shapes) sh.shapes = sh.shapes.filter(o => o.id !== id); G().objSel = null; render(); if (G().onChange) G().onChange(); }
   return {render, down, deselect, add, remove, find, pos, mediaOf};
 })();
