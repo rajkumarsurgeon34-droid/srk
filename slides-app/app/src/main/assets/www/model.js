@@ -3,30 +3,6 @@
 const uid = () => Math.random().toString(36).slice(2, 10);
 const clone = o => JSON.parse(JSON.stringify(o));
 
-/* ---------------------------------------------------------------- themes */
-const THEMES = {
-  office:  {name: 'Office',  bg: '#FFFFFF', title: '#1F2A44', text: '#2B2B2B', accent: '#2F55D4', accent2: '#E0603F', head: 'Calibri Light', body: 'Calibri', deco: 'none'},
-  clinic:  {name: 'Clinic',  bg: '#FFFFFF', title: '#0B4F5C', text: '#24343A', accent: '#0F8B8D', accent2: '#F2A541', head: 'Segoe UI', body: 'Segoe UI', deco: 'band'},
-  slate:   {name: 'Slate',   bg: '#1C2333', title: '#FFFFFF', text: '#D9DEEA', accent: '#6C8CFF', accent2: '#FFB454', head: 'Segoe UI', body: 'Segoe UI', deco: 'corner'},
-  sunset:  {name: 'Sunset',  bg: '#FFF8F1', title: '#7A2E12', text: '#3D2A20', accent: '#E0603F', accent2: '#3A7D6B', head: 'Georgia', body: 'Calibri', deco: 'side'},
-  ink:     {name: 'Ink',     bg: '#FFFFFF', title: '#111111', text: '#222222', accent: '#111111', accent2: '#C8102E', head: 'Georgia', body: 'Georgia', deco: 'rule'},
-  forest:  {name: 'Forest',  bg: '#F4F7F2', title: '#1E4D2B', text: '#26332A', accent: '#2E7D4F', accent2: '#B5883E', head: 'Trebuchet MS', body: 'Trebuchet MS', deco: 'band'},
-  royal:   {name: 'Royal',   bg: '#24123F', title: '#FFFFFF', text: '#E7DDF7', accent: '#B387FF', accent2: '#FFD166', head: 'Century Gothic', body: 'Century Gothic', deco: 'side'},
-  paper:   {name: 'Paper',   bg: '#FBF7EE', title: '#2C2A26', text: '#3B3833', accent: '#8C5E3C', accent2: '#3F6E8C', head: 'Garamond', body: 'Garamond', deco: 'rule'},
-};
-function themeOf(deck){ return deck.theme === 'custom' && deck.themeData ? deck.themeData : THEMES[deck.theme] || THEMES.office; }
-
-/* decorative shapes drawn under every slide (part of the theme, not editable) */
-function themeDeco(th, size, layout){
-  const W = size.w, H = size.h, d = th.deco, big = layout === 'title' || layout === 'section';
-  const r = (x, y, w, h, fill) => ({id: 'deco', kind: 'box', geom: 'rect', fill, line: null, html: '', x, y, w, h, rot: 0, deco: true});
-  if (d === 'band') return big ? [r(0, H * 0.62, W, H * 0.38, th.accent), r(0, H * 0.62 - 6, W, 6, th.accent2)] : [r(0, 0, W, 10, th.accent), r(0, H - 6, W, 6, th.accent2)];
-  if (d === 'corner') return big ? [r(0, 0, 18, H, th.accent), r(W - 160, H - 10, 160, 10, th.accent2)] : [r(0, 0, 10, H, th.accent)];
-  if (d === 'side') return big ? [r(W * 0.72, 0, W * 0.28, H, th.accent), r(W * 0.72 - 8, 0, 8, H, th.accent2)] : [r(W - 24, 0, 24, H, th.accent)];
-  if (d === 'rule') return big ? [r(W * 0.08, H * 0.6, W * 0.18, 4, th.accent2)] : [r(W * 0.06, H * 0.205, W * 0.88, 1.5, th.accent)];
-  return [];
-}
-
 /* ---------------------------------------------------------------- layouts */
 const LAYOUTS = [
   {key: 'title', name: 'Title slide'}, {key: 'content', name: 'Title and content'}, {key: 'section', name: 'Section header'},
@@ -39,23 +15,22 @@ function phBox(ph, x, y, w, h, extra = {}){
     anchor: ph === 'title' ? 'b' : 't', style: {}, ...extra};
 }
 function layoutObjects(layout, size, th){
-  const W = size.w, H = size.h, mx = W * 0.06, side = th && th.deco === 'side', cw = side ? W * 0.62 : W - 2 * mx, wide = W - 2 * mx - (side && layout !== 'title' && layout !== 'section' ? 24 : 0);
-  const band = th && th.deco === 'band';
+  const W = size.w, H = size.h, L = (th && th.lay) || DEFAULT_LAY, [il, ir, it, ib] = L.ins, T = L.title;
+  const l = W * il, cw = W - W * il - W * ir, top = H * it, bot = H - H * ib, ct = L.ct ? {color: L.ct} : {};
+  const tTitle = (size0) => ({style: {size: size0, ...(T.tc ? {color: T.tc} : {})}, ...(T.align ? {align: T.align} : {})});
+  const tSub = (size0) => ({style: {size: size0, ...(T.sc ? {color: T.sc} : {})}, ...(T.align ? {align: T.align} : {})});
+  const bodyY = top + H * 0.2, bodyH = bot - bodyY;
   switch (layout){
-    case 'title': return band
-      ? [phBox('title', mx, H * 0.16, W - 2 * mx, H * 0.38, {style: {size: 50}}), phBox('subtitle', mx, H * 0.68, W - 2 * mx, H * 0.2, {style: {size: 24, color: '#FFFFFF'}})]
-      : [phBox('title', mx, H * 0.2, cw, H * 0.38, {style: {size: 50}}), phBox('subtitle', mx, H * 0.64, cw, H * 0.18, {style: {size: 24}})];
-    case 'section': return band
-      ? [phBox('title', mx, H * 0.2, W - 2 * mx, H * 0.36, {style: {size: 44}}), phBox('subtitle', mx, H * 0.68, W - 2 * mx, H * 0.16, {style: {size: 20, color: '#FFFFFF'}})]
-      : [phBox('title', mx, H * 0.26, cw, H * 0.3, {style: {size: 44}}), phBox('subtitle', mx, H * 0.62, cw, H * 0.16, {style: {size: 20}})];
-    case 'content': return [phBox('title', mx, H * 0.05, wide, H * 0.15), phBox('body', mx, H * 0.25, wide, H * 0.67, {bullets: true})];
-    case 'two': return [phBox('title', mx, H * 0.05, wide, H * 0.15), phBox('body', mx, H * 0.25, wide / 2 - 10, H * 0.67, {bullets: true}), phBox('body', mx + wide / 2 + 10, H * 0.25, wide / 2 - 10, H * 0.67, {bullets: true})];
-    case 'compare': return [phBox('title', mx, H * 0.05, wide, H * 0.15),
-      phBox('body', mx, H * 0.24, wide / 2 - 10, H * 0.09, {style: {size: 22, bold: true}, prompt: 'Heading'}), phBox('body', mx, H * 0.34, wide / 2 - 10, H * 0.58, {bullets: true}),
-      phBox('body', mx + wide / 2 + 10, H * 0.24, wide / 2 - 10, H * 0.09, {style: {size: 22, bold: true}, prompt: 'Heading'}), phBox('body', mx + wide / 2 + 10, H * 0.34, wide / 2 - 10, H * 0.58, {bullets: true})];
-    case 'titleOnly': return [phBox('title', mx, H * 0.05, wide, H * 0.15)];
-    case 'caption': return [phBox('title', mx, H * 0.1, W * 0.32, H * 0.2, {style: {size: 28}}), phBox('body', mx, H * 0.34, W * 0.32, H * 0.5, {style: {size: 16}, prompt: PROMPTS.caption}),
-      {id: uid(), kind: 'box', geom: 'rect', fill: '#E9ECF3', line: null, html: '<p style="text-align:center">Insert › Picture to add a photo</p>', anchor: 'ctr', x: Math.round(W * 0.44), y: Math.round(H * 0.1), w: Math.round(W * 0.5 - (side ? 24 : 0)), h: Math.round(H * 0.8), rot: 0, style: {size: 14, color: '#6B7390'}, picSlot: true}];
+    case 'title': return [phBox('title', W * T.x, H * T.y, W * T.w, H * T.h, tTitle(50)), phBox('subtitle', W * T.x, H * T.sy, W * T.w, H * T.sh, tSub(24))];
+    case 'section': return [phBox('title', W * T.x, H * (T.y + .04), W * T.w, H * (T.h - .06), tTitle(44)), phBox('subtitle', W * T.x, H * T.sy, W * T.w, H * T.sh, tSub(20))];
+    case 'content': return [phBox('title', l, top, cw, H * 0.15, {style: {...ct}}), phBox('body', l, bodyY, cw, bodyH, {bullets: true})];
+    case 'two': return [phBox('title', l, top, cw, H * 0.15, {style: {...ct}}), phBox('body', l, bodyY, cw / 2 - 10, bodyH, {bullets: true}), phBox('body', l + cw / 2 + 10, bodyY, cw / 2 - 10, bodyH, {bullets: true})];
+    case 'compare': return [phBox('title', l, top, cw, H * 0.15, {style: {...ct}}),
+      phBox('body', l, bodyY - H * .01, cw / 2 - 10, H * 0.09, {style: {size: 22, bold: true}, prompt: 'Heading'}), phBox('body', l, bodyY + H * .09, cw / 2 - 10, bodyH - H * .09, {bullets: true}),
+      phBox('body', l + cw / 2 + 10, bodyY - H * .01, cw / 2 - 10, H * 0.09, {style: {size: 22, bold: true}, prompt: 'Heading'}), phBox('body', l + cw / 2 + 10, bodyY + H * .09, cw / 2 - 10, bodyH - H * .09, {bullets: true})];
+    case 'titleOnly': return [phBox('title', l, top, cw, H * 0.15, {style: {...ct}})];
+    case 'caption': return [phBox('title', l, top + H * .05, cw * 0.36, H * 0.2, {style: {size: 28, ...ct}}), phBox('body', l, top + H * .29, cw * 0.36, bot - top - H * .32, {style: {size: 16}, prompt: PROMPTS.caption}),
+      {id: uid(), kind: 'box', geom: 'rect', fill: '#E9ECF3', line: null, html: '<p style="text-align:center">Insert › Picture to add a photo</p>', anchor: 'ctr', x: Math.round(l + cw * 0.42), y: Math.round(top + H * .04), w: Math.round(cw * 0.58), h: Math.round(bot - top - H * .06), rot: 0, style: {size: 14, color: '#6B7390'}, picSlot: true}];
     default: return [];
   }
 }
@@ -102,7 +77,7 @@ function shapeIcon(g){ return `<svg viewBox="-2 -2 28 20" fill="none" stroke="cu
 function defSize(o){ return o.ph === 'title' ? 40 : o.ph === 'subtitle' ? 24 : o.ph === 'body' ? 24 : 18; }
 function resolve(o, th){
   const s = o.style || {};
-  return {font: s.font || (o.ph === 'title' ? th.head : th.body), size: s.size || defSize(o), color: s.color || (o.ph === 'title' ? th.title : th.text), bold: !!s.bold, accent: th.accent, border: th.deco === 'none' || th.bg.toLowerCase() === '#ffffff' ? '#BFBFBF' : th.accent, italic: !!s.italic};
+  return {font: s.font || (o.ph === 'title' ? th.head : th.body), size: s.size || defSize(o), color: s.color || (o.ph === 'title' ? th.title : th.text), bold: !!s.bold, accent: th.accent, border: isDark(th.bg) ? tint(th.accent, .2) : '#BFBFBF', italic: !!s.italic};
 }
 function slideBg(slide, deck){ if (slide.bg) return slide.bg; const th = themeOf(deck); return {color: th.bg}; }
 function mediaSrc(deck, src){ return src && src.startsWith('m:') ? (deck.media || {})[src.slice(2)] || '' : src || ''; }
@@ -142,13 +117,12 @@ function renderObj(o, deck, th, opts = {}){
   return el;
 }
 function renderSlide(slide, deck, opts = {}){
-  const th = themeOf(deck); const W = deck.size.w, H = deck.size.h;
+  const th = slideTheme(deck, slide); const W = deck.size.w, H = deck.size.h;
   const el = document.createElement('div'); el.className = 'slide' + (opts.edit ? '' : ' noprompt');
   el.style.width = W + 'px'; el.style.height = H + 'px';
-  const bg = slideBg(slide, deck);
-  if (bg.image){ el.style.background = `${bg.color || '#fff'} url("${mediaSrc(deck, bg.image)}") center/cover no-repeat`; } else el.style.background = bg.color || '#fff';
-  el.style.setProperty('--bullet', th.accent);
-  if (!slide.bg || !slide.bg.image) if (!slide.noDeco) for (const d of themeDeco(th, deck.size, slide.layout)) { const n = renderObj(d, deck, th); n.style.pointerEvents = 'none'; el.appendChild(n); }
+  el.style.background = bgCss(slideBg(slide, deck), deck);
+  const tone = bgTone(slide.bg && !slide.bg.image ? slide.bg : null, th); el.style.setProperty('--bullet', Math.abs(lum(th.accent) - lum(tone)) < 0.18 ? th.text : th.accent);
+  const art = decoSvg(deck, slide); if (art) el.insertAdjacentHTML('beforeend', art);
   for (const o of slide.objects){ if (!opts.edit && o.picSlot) continue; el.appendChild(renderObj(o, deck, th, opts)); }
   return el;
 }
@@ -190,7 +164,7 @@ const TEMPLATES = [
     add('compare', 'Critical appraisal', 'Strengths', ul(['Randomised', 'Adequate follow-up']), 'Limitations', ul(['Single centre', 'Short duration']));
     add('content', 'Conclusion', ul(['Authors’ conclusion', 'Our verdict', 'Impact on our practice']));
   })},
-  {key: 'lecture', name: 'Lecture', sub: 'Teaching session', make: () => makeDeck('Lecture', 'slate', (add) => {
+  {key: 'lecture', name: 'Lecture', sub: 'Teaching session', make: () => makeDeck('Lecture', 'aurora', (add) => {
     add('title', 'Lecture Title', 'Speaker name · Date');
     add('content', 'Learning objectives', '<p>By the end of this session you will be able to:</p>' + ul(['Describe …', 'Explain …', 'Apply …']));
     add('section', 'Part 1', 'Introduction');
@@ -198,7 +172,7 @@ const TEMPLATES = [
     add('content', 'Summary', ul(['Take-home message 1', 'Take-home message 2', 'Take-home message 3']));
     add('title', 'Thank you', 'Questions?');
   })},
-  {key: 'pitch', name: 'Business pitch', sub: 'Startup / project pitch', make: () => makeDeck('Pitch deck', 'sunset', (add) => {
+  {key: 'pitch', name: 'Business pitch', sub: 'Startup / project pitch', make: () => makeDeck('Pitch deck', 'blocks', (add) => {
     add('title', 'Company Name', 'One line that says what you do');
     add('content', 'The problem', ul(['Who has the problem', 'How they solve it today', 'Why that isn’t good enough']));
     add('content', 'Our solution', ul(['What we built', 'How it works', 'Why now']));

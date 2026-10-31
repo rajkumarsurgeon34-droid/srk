@@ -25,7 +25,7 @@ const App = (() => {
         const media = {}; for (const k of used) if (deck.media[k]) media[k] = deck.media[k];
         const copy = {...deck, media};
         const first = deck.slides[0]; const fm = {}; if (first){ if (first.bg && first.bg.image) mark(first.bg.image); first.objects.forEach(o => { if (o.src && o.src.startsWith('m:')) fm[o.src.slice(2)] = media[o.src.slice(2)]; }); if (first.bg && first.bg.image && first.bg.image.startsWith('m:')) fm[first.bg.image.slice(2)] = media[first.bg.image.slice(2)]; }
-        const meta = {id: deck.id, name: deck.name, updated: deck.updated || Date.now(), count: deck.slides.length, first: {slide: first, media: fm, size: deck.size, theme: deck.theme, themeData: deck.themeData}};
+        const meta = {id: deck.id, name: deck.name, updated: deck.updated || Date.now(), count: deck.slides.length, first: {slide: first, media: fm, size: deck.size, theme: deck.theme, variant: deck.variant || 0, themeData: deck.themeData}};
         await tx('decks', 'readwrite', st => st.put(copy)); await tx('meta', 'readwrite', st => st.put(meta));
       },
       get: id => tx('decks', 'readonly', st => st.get(id)),
@@ -109,19 +109,23 @@ const App = (() => {
 
   /* ---------------------------------------------------------------- export */
   function exportModel(deck){
-    const th = themeOf(deck);
     const slides = deck.slides.map(s => {
-      const objects = [];
-      if (!(s.bg && s.bg.image) && !s.noDeco) objects.push(...themeDeco(th, deck.size, s.layout).map(o => ({...o, resolved: resolve(o, th)})));
+      const th = slideTheme(deck, s); const objects = [];
       for (const o of s.objects){ if (o.picSlot) continue; if (o.kind === 'box' && o.ph && !(o.html || '').replace(/<[^>]+>/g, '').trim()) continue;
         const c = {...o, resolved: resolve(o, th)}; if (c.kind === 'image') c.src = mediaSrc(deck, c.src); objects.push(c); }
       return {...s, objects};
     });
     return {...deck, slides};
   }
+  /* theme art, gradients and pictures become one background picture in the .pptx (text stays editable) */
+  function rasterBg(svg, W, H){
+    return new Promise((res, rej) => { const im = new Image(); im.onload = () => { const k = 1920 / W, c = document.createElement('canvas'); c.width = 1920; c.height = Math.round(H * k); const x = c.getContext('2d'); x.drawImage(im, 0, 0, c.width, c.height); res(c.toDataURL('image/jpeg', 0.92)); };
+      im.onerror = () => rej(new Error('Couldn’t draw a slide background.')); im.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg); });
+  }
   async function makePptx(){
-    Editor.flush(); await needPptx(); const deck = Editor.deck;
-    return writePptx(exportModel(deck), {resolveBg: async s => { const bg = slideBg(s, deck); return bg.image ? {image: mediaSrc(deck, bg.image)} : {color: bg.color}; }});
+    Editor.flush(); await needPptx(); const deck = Editor.deck; const cache = {};
+    return writePptx(exportModel(deck), {resolveBg: async s => { const b = backgroundSvg(deck, s); if (b.plain) return {color: b.color};
+      return {image: cache[b.svg] || (cache[b.svg] = await rasterBg(b.svg, deck.size.w, deck.size.h))}; }});
   }
   async function savePptx(){ try { busy('Saving PowerPoint file…'); const b = await makePptx(); unbusy(); await saveFile(new Blob([b], {type: PPTX_MIME}), cleanName(Editor.deck.name, 'pptx')); } catch(e){ unbusy(); toast(e.message || 'Couldn’t save.', 4000); console.error(e); } }
   async function slideCanvases(onEach, scaleK = 2){
@@ -282,7 +286,7 @@ const App = (() => {
       const del = h('button', {class: 'ib', type: 'button', 'aria-label': `Delete ${m.name}`, title: 'Delete', html: I.trash});
       del.addEventListener('click', () => dialog('Delete presentation?', h('p', {style: 'margin:0'}, `“${m.name}” will be removed from this phone. Files you saved stay in Downloads.`), [['Cancel'], ['Delete', 'danger', async () => { await Store.del(m.id); renderRecent(); }]]));
       box.append(h('div', {class: 'rrow'}, mini, meta, del));
-      if (m.first && m.first.slide){ const d = {size: m.first.size, theme: m.first.theme, themeData: m.first.themeData, media: m.first.media || {}}; requestAnimationFrame(() => miniSlide(mini, m.first.slide, d)); }
+      if (m.first && m.first.slide){ const d = {size: m.first.size, theme: m.first.theme, variant: m.first.variant || 0, themeData: m.first.themeData, media: m.first.media || {}}; requestAnimationFrame(() => miniSlide(mini, m.first.slide, d)); }
     }
   }
   function toggleTheme(){ const r = document.documentElement; const dark = r.dataset.theme ? r.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches; r.dataset.theme = dark ? 'light' : 'dark'; try { localStorage.setItem('srk-slides-theme', r.dataset.theme); } catch(e){} }

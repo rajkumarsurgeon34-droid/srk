@@ -139,7 +139,16 @@ label.f{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:60
 
 /* ---------- the slide ---------- */
 .slide{position:absolute;left:0;top:0;transform-origin:0 0;overflow:hidden;background:#fff;color:#000;-webkit-user-select:none;user-select:none}
+.slide svg.deco{position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none}
 .obj{position:absolute;transform-origin:50% 50%}
+.variants{display:flex;gap:6px;align-items:center}
+.variants button{width:60px;height:34px;padding:0;border:1px solid var(--line);border-radius:5px;overflow:hidden;position:relative;cursor:pointer;background:#fff}
+.variants button.on{outline:2.5px solid var(--accent);outline-offset:1px}
+.bgstyles{display:grid;grid-template-columns:repeat(4,60px);gap:6px}
+.bgstyles button{width:60px;height:34px;border:1px solid var(--line);border-radius:5px;cursor:pointer;padding:0}
+.gradrow{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:4px}
+.gradrow input[type=color]{width:40px;height:34px;border:1px solid var(--line);border-radius:6px;padding:2px;background:none}
+.bgpop{width:300px}
 .obj svg.geo{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
 .obj .tx{position:absolute;inset:0;display:flex;flex-direction:column;padding:3.6px 7.2px;overflow:visible}
 .obj .tx[data-a="ctr"]{justify-content:center}.obj .tx[data-a="b"]{justify-content:flex-end}
@@ -175,6 +184,7 @@ label.f{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:60
 .pop .mi{display:flex;align-items:center;gap:10px;width:100%;border:0;background:none;padding:9px 10px;border-radius:8px;cursor:pointer;text-align:left;font-size:14px;color:var(--ink);white-space:nowrap}
 .pop .mi:hover{background:var(--sunk)}
 .pop .mi.on{background:var(--accent-soft)}
+.pop .mi svg{width:20px;height:20px;flex:none}
 .pop .mi small{color:var(--muted);margin-left:auto;font-size:12px}
 .pop hr{border:0;border-top:1px solid var(--line);margin:6px 2px}
 .pop .ph{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:4px 6px}
@@ -273,6 +283,7 @@ label.f{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:60
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
 <script src="pptx.js"></script>
+<script src="themes.js"></script>
 <script src="model.js"></script>
 <script src="editor.js"></script>
 <script src="app.js"></script>

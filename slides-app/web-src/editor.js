@@ -46,11 +46,11 @@ const Editor = (() => {
   const slide = () => E.deck.slides[E.cur];
   const objOf = id => slide().objects.find(o => o.id === id);
   const selObj = () => E.sel ? objOf(E.sel) : null;
-  const th = () => themeOf(E.deck);
+  const th = () => slideTheme(E.deck, slide());
   let slideEl = null, scale = 1;
 
   function toast(msg, ms = 2600){ const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => t.hidden = true, ms); }
-  function snapshot(){ const d = E.deck; return JSON.stringify({size: d.size, theme: d.theme, themeData: d.themeData, slides: d.slides}); }
+  function snapshot(){ const d = E.deck; return JSON.stringify({size: d.size, theme: d.theme, variant: d.variant || 0, themeData: d.themeData, slides: d.slides}); }
   function commit(){ const s = snapshot(); if (E.hist[E.hi] === s) return; E.hist = E.hist.slice(0, E.hi + 1); E.hist.push(s); if (E.hist.length > 80) E.hist.shift(); E.hi = E.hist.length - 1; changed(); }
   function changed(){ E.deck.updated = Date.now(); updUndo(); if (E.onChange) E.onChange(E.deck); }
   function restoreSnap(s){ const o = JSON.parse(s); Object.assign(E.deck, o); E.cur = Math.min(E.cur, E.deck.slides.length - 1); E.sel = null; E.editing = false; renderAll(); changed(); }
@@ -332,14 +332,16 @@ const Editor = (() => {
     s.layout = layout; s.objects = [...fresh, ...keep];
   }
   function setLayout(layout){ if (E.editing) endEdit(); applyLayout(slide(), layout); E.sel = null; renderAll(); commit(); }
-  function setTheme(key){
-    if (E.editing) endEdit(); const was = E.deck.theme; E.deck.theme = key;
+  function setTheme(key, variant = 0){
+    if (E.editing) endEdit(); const was = E.deck.theme; E.deck.theme = key; E.deck.variant = variant;
     for (const s of E.deck.slides){
       if (s.layout && s.objects.some(o => o.ph)) applyLayout(s, s.layout);
+      if (!s.noDeco && s.bg && !s.bg.image) s.bg = null;
       if (was === 'custom'){ s.bg = null; for (const o of s.objects) if (o.kind === 'box' && !o.fill && o.style){ delete o.style.color; delete o.style.font; } }
     }
     renderAll(); commit();
   }
+  function setVariant(i){ if (E.editing) endEdit(); E.deck.variant = i; renderAll(); commit(); }
   function setSize(ratio){
     const W0 = E.deck.size.w, W = ratio === '4:3' ? 720 : 960; if (W === W0) return; const k = W / W0;
     for (const s of E.deck.slides) for (const o of s.objects){ o.x = Math.round(o.x * k); o.w = Math.round(o.w * k); }
@@ -441,19 +443,41 @@ const Editor = (() => {
   }
   function themePicker(anchor){
     pop(anchor, p => { p.append(h('div', {class: 'ph'}, 'Themes')); const g = h('div', {class: 'themegrid'});
-      for (const [k, t] of Object.entries(THEMES)){ const m = h('div', {class: 'tmm'}); const b = h('button', {type: 'button', class: E.deck.theme === k ? 'on' : ''}, m, t.name); b.addEventListener('click', () => { closePop(); setTheme(k); }); g.append(b);
-        const d = {...E.deck, theme: k}; const demo = {id: 'x', layout: 'title', bg: null, objects: layoutObjects('title', E.deck.size, t).map(o => ({...o, html: `<p>${o.ph === 'title' ? 'Aa Title' : 'Subtitle'}</p>`}))};
+      for (const k of THEME_ORDER){ const t = THEMES[k]; const m = h('div', {class: 'tmm'}); const b = h('button', {type: 'button', class: E.deck.theme === k ? 'on' : ''}, m, t.name); b.addEventListener('click', () => { closePop(); setTheme(k); }); g.append(b);
+        const d = {...E.deck, theme: k, variant: 0}; const th0 = themeOf(d); const demo = {id: 'x', layout: 'title', bg: null, objects: layoutObjects('title', E.deck.size, th0).map(o => ({...o, html: `<p>${o.ph === 'title' ? 'Aa' : t.name}</p>`}))};
         requestAnimationFrame(() => miniSlide(m, demo, d)); }
       p.append(g); });
   }
+  function variantRow(){
+    const row = h('div', {class: 'variants'}); const t = THEMES[E.deck.theme]; if (!t) return row;
+    t.variants.forEach((v, i) => { const m = h('div', {style: 'position:absolute;inset:0'}); const b = h('button', {type: 'button', title: `Colour variant ${i + 1}`, 'aria-label': `Colour variant ${i + 1}`, class: (E.deck.variant || 0) === i ? 'on' : ''}, m);
+      b.addEventListener('pointerdown', e => e.preventDefault()); b.addEventListener('click', () => setVariant(i)); row.append(b);
+      const d = {...E.deck, variant: i}; const demo = {id: 'x', layout: 'title', bg: null, objects: layoutObjects('title', E.deck.size, themeOf(d)).map(o => ({...o, html: o.ph === 'title' ? '<p>Aa</p>' : ''}))};
+      requestAnimationFrame(() => miniSlide(m, demo, d)); });
+    return row;
+  }
   function bgPicker(anchor){
     pop(anchor, p => {
-      p.append(h('div', {class: 'ph'}, 'Background'));
-      const t = th(); const sg = h('div', {class: 'swatches'}); [t.bg, '#FFFFFF', '#F4F5F8', '#FFF8F1', '#EEF6F4', '#1C2333', '#24123F', '#000000', t.accent, t.accent2].forEach(c => { const b = h('button', {type: 'button', title: c}); b.style.background = c; b.addEventListener('click', () => { closePop(); setBg({color: c}); }); sg.append(b); }); p.append(sg);
-      const inp = h('input', {type: 'color', value: '#ffffff', style: 'width:100%;height:36px;border:0;background:none;margin-top:6px'}); inp.addEventListener('change', () => { closePop(); setBg({color: inp.value.toUpperCase()}); }); p.append(inp);
-      const fp = h('label', {class: 'mi filepick', html: I.bgimg + '<span>Picture background…</span>'}); const fi = h('input', {type: 'file', accept: 'image/*', class: 'fileover'}); fp.append(fi);
+      p.classList.add('bgpop'); const t = themeOf(E.deck), s = slide();
+      p.append(h('div', {class: 'ph'}, 'Background styles'));
+      const st = h('div', {class: 'bgstyles'}); bgStyles(t).forEach((bg, i) => { const b = h('button', {type: 'button', title: `Style ${i + 1}`, 'aria-label': `Background style ${i + 1}`}); b.style.background = bgCss(bg, E.deck); b.addEventListener('click', () => { closePop(); setBg(bg); }); st.append(b); }); p.append(st);
+      p.append(h('div', {class: 'ph'}, 'Solid fill'));
+      const sg = h('div', {class: 'swatches'}); [t.bg, '#FFFFFF', '#F2F2F2', '#FFF8F1', '#EEF6F4', tint(t.accent, .85), t.accent, t.accent2, '#1C2333', '#000000'].forEach(c => { const b = h('button', {type: 'button', title: c}); b.style.background = c; b.addEventListener('click', () => { closePop(); setBg({color: c}); }); sg.append(b); }); p.append(sg);
+      const inp = h('input', {type: 'color', value: '#ffffff', style: 'width:100%;height:34px;border:0;background:none;margin-top:4px', 'aria-label': 'Custom colour'}); inp.addEventListener('change', () => { closePop(); setBg({color: inp.value.toUpperCase()}); }); p.append(inp);
+      p.append(h('div', {class: 'ph'}, 'Gradient fill'));
+      const cur = s.bg && s.bg.gradient ? s.bg.gradient : {a: tint(t.accent, .2), b: t.accent2 || shade(t.accent, .4), angle: 135};
+      const ca = h('input', {type: 'color', value: cur.a.toLowerCase(), 'aria-label': 'Gradient start colour'}), cb = h('input', {type: 'color', value: cur.b.toLowerCase(), 'aria-label': 'Gradient end colour'});
+      const dir = h('select', {class: 'rsel', 'aria-label': 'Gradient direction'}); [['180', 'Top to bottom'], ['90', 'Left to right'], ['135', 'Diagonal'], ['45', 'Diagonal up'], ['radial', 'From centre']].forEach(([v, n]) => dir.append(h('option', {value: v}, n)));
+      dir.value = cur.radial ? 'radial' : String(cur.angle || 180);
+      const apply = h('button', {class: 'btn sm primary', type: 'button'}, 'Apply');
+      apply.addEventListener('click', () => { closePop(); setBg({gradient: {a: ca.value.toUpperCase(), b: cb.value.toUpperCase(), ...(dir.value === 'radial' ? {radial: true} : {angle: +dir.value})}}); });
+      p.append(h('div', {class: 'gradrow'}, ca, cb, dir, apply));
+      p.append(h('div', {class: 'ph'}, 'Picture fill'));
+      const fp = h('label', {class: 'mi filepick', html: I.bgimg + '<span>Choose a picture…</span>'}); const fi = h('input', {type: 'file', accept: 'image/*', class: 'fileover'}); fp.append(fi);
       fi.addEventListener('change', async () => { const f = fi.files[0]; closePop(); if (!f) return; const d = await App.imageToData(f); const id = uid(); E.deck.media[id] = d.src; setBg({image: 'm:' + id, color: '#FFFFFF'}); }); p.append(fp);
-      p.append(h('hr'), mi(I.dup, 'Apply to all slides', () => setBg(slide().bg, true)), mi(I.replace, 'Reset to theme', () => setBg(null)));
+      p.append(h('hr'), mi(s.noDeco ? I.bg : I.none, s.noDeco ? 'Show background graphics' : 'Hide background graphics', () => { s.noDeco = !s.noDeco; renderAll(); commit(); }),
+        mi(I.dup, 'Apply to all slides', () => { const b = slide().bg, nd = !!slide().noDeco; E.deck.slides.forEach(x => { x.bg = b ? clone(b) : null; x.noDeco = nd; }); renderAll(); commit(); toast('Background applied to all slides'); }),
+        mi(I.replace, 'Reset background', () => { slide().noDeco = false; setBg(null); }));
     });
   }
 
@@ -505,8 +529,9 @@ const Editor = (() => {
     } else if (t === 'design'){
       r.append(
         grp('Themes', rb(I.theme, 'Themes', b => themePicker(b), {label: (THEMES[E.deck.theme] || {name: 'From file'}).name, caret: true})),
+        ...(THEMES[E.deck.theme] ? [grp('Variants', variantRow())] : []),
         grp('Slide size', rb(I.size, 'Widescreen 16:9', () => setSize('16:9'), {label: '16:9', key: 'w169'}), rb(I.size, 'Standard 4:3', () => setSize('4:3'), {label: '4:3', key: 'w43'})),
-        grp('Background', rb(I.bg, 'Format background', b => bgPicker(b), {label: 'Background', caret: true})),
+        grp('Customise', rb(I.bg, 'Format background', b => bgPicker(b), {label: 'Format Background', caret: true})),
       );
       R.w169.classList.toggle('on', E.deck.size.w !== 720); R.w43.classList.toggle('on', E.deck.size.w === 720);
     } else if (t === 'transitions'){
