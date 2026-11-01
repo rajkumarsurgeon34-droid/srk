@@ -1,0 +1,61 @@
+name: Test SRK VPN end to end
+
+on:
+  push:
+    branches: [main]
+    paths: ['vpn-app/**', '.github/workflows/test-vpn.yml']
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Build the debug app (has the test hook)
+        working-directory: vpn-app
+        run: |
+          python3 build_assets.py web
+          gradle assembleDebug --console=plain
+      - name: Start a real WireGuard server on this machine
+        shell: bash
+        run: |
+          set -e
+          sudo apt-get update -qq && sudo apt-get install -y -qq wireguard-tools >/dev/null
+          umask 077; wg genkey > s.key; wg pubkey < s.key > s.pub; wg genkey > c.key; wg pubkey < c.key > c.pub
+          sudo ip link add wg0 type wireguard
+          sudo wg set wg0 listen-port 51820 private-key s.key peer "$(cat c.pub)" allowed-ips 10.66.66.2/32
+          sudo ip addr add 10.66.66.1/24 dev wg0 && sudo ip link set wg0 up
+          mkdir -p www vpn-report && echo "hello-through-srk-vpn" > www/hello.txt
+          nohup python3 -m http.server 8080 --bind 10.66.66.1 --directory www > http.log 2>&1 &
+          printf '[Interface]\nPrivateKey = %s\nAddress = 10.66.66.2/32\n\n[Peer]\nPublicKey = %s\nEndpoint = 10.0.2.2:51820\nAllowedIPs = 10.66.66.0/24\nPersistentKeepalive = 15\n' "$(cat c.key)" "$(cat s.pub)" > client.conf
+          sudo wg show
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+      - name: Run the app on an Android emulator and connect through the VPN
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          script: bash vpn-app/ci/e2e.sh
+      - name: Publish report
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp http.log vpn-report/ 2>/dev/null || true
+          (cd vpn-report && zip -q -r ../vpn-report.zip .) || echo none > vpn-report.zip
+          gh release create "vpn-test-${{ github.run_number }}" vpn-report.zip --prerelease --title "SRK VPN end-to-end test ${{ github.run_number }}" --notes "Emulator + real WireGuard server"

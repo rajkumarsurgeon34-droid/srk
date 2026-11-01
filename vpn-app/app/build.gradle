@@ -1,0 +1,64 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'in.shazverse.srkvpn'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'in.shazverse.srkvpn'
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName '1.0.0'
+        // x86_64 only so the build machine's Android emulator can run the end-to-end test
+        ndk { abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64' }
+    }
+
+    // A fixed key, so every new build installs over the old one without uninstalling
+    signingConfigs {
+        srk {
+            storeFile file('srk.keystore')
+            storePassword 'srk-store-2026'
+            keyAlias 'srk'
+            keyPassword 'srk-store-2026'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.srk
+        }
+        debug {
+            signingConfig signingConfigs.srk
+            applicationIdSuffix '.debug'
+        }
+    }
+
+    buildFeatures { buildConfig true }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    androidResources {
+        noCompress 'js', 'html', 'css'
+    }
+
+    packaging {
+        jniLibs { useLegacyPackaging true }
+    }
+}
+
+dependencies {
+    implementation platform('org.jetbrains.kotlin:kotlin-bom:1.8.22')
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'androidx.core:core:1.13.1'
+    implementation 'androidx.webkit:webkit:1.12.1'
+    implementation 'com.wireguard.android:tunnel:1.0.20230706'
+    implementation 'com.google.android.gms:play-services-code-scanner:16.1.0'
+    implementation 'com.google.zxing:core:3.5.3'
+}

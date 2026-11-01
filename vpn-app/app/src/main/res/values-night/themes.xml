@@ -1,0 +1,10 @@
+<resources>
+    <style name="Theme.SRKVpn" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/srk_accent</item>
+        <item name="colorAccent">@color/srk_accent</item>
+        <item name="android:windowBackground">@color/srk_bar</item>
+        <item name="android:statusBarColor">@color/srk_bar</item>
+        <item name="android:navigationBarColor">@color/srk_bar</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>
