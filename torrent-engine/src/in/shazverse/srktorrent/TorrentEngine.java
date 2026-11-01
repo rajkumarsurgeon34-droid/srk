@@ -96,7 +96,9 @@ public final class TorrentEngine {
         File state = new File(data, "session.dat");
         try { params = state.exists() ? new SessionParams(readAll(state)) : new SessionParams(); } catch (Throwable e) { params = new SessionParams(); }
         params.setSettings(sp);
-        if ("android".equals(host.platform())) { try { params.setPosixDiskIO(); } catch (Throwable ignored) { } } // plain read/write works best with Android storage
+        // Plain read/write storage everywhere except Windows. libtorrent's memory-mapped storage installs its own SIGSEGV/SIGBUS
+        // handler, and Java (and Android's runtime) use SIGSEGV internally — together they can kill the process. Windows uses SEH, so it is safe there.
+        if (!"windows".equals(host.platform())) { try { params.setPosixDiskIO(); } catch (Throwable ignored) { } }
         sm.addListener(new AlertListener() {
             @Override public int[] types() { return null; }
             @Override public void alert(Alert<?> a) { try { onAlert(a); } catch (Throwable e) { log("alert " + e); } }

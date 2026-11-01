@@ -26,7 +26,7 @@ public final class SelfTest {
         public void setPref(String k, String v) { if (v == null) prefs.remove(k); else prefs.put(k, v); }
         public File dataDir() { return data; }
         public String defaultSaveDir() { return save.getAbsolutePath(); }
-        public String platform() { return "linux"; }
+        public String platform() { return System.getProperty("os.name", "").toLowerCase().contains("win") ? "windows" : "linux"; }
         Map<String, Object> waitEvent(String type, long ms) { return waitFor(m -> type.equals(m.get("type")), ms); }
         Map<String, Object> waitFor(Predicate<Map<String, Object>> p, long ms) { long end = System.currentTimeMillis() + ms; int seen = 0; while (System.currentTimeMillis() < end) { for (int i = seen; i < ev.size(); i++) if (p.test(ev.get(i))) { Map<String, Object> m = ev.remove(i); return m; } sleep(100); } return null; }
         @SuppressWarnings("unchecked") Map<String, Object> row(String id) { Map<String, Object> l = lastList; if (l == null) return null; for (Object o : (List<Object>) l.get("torrents")) if (id.equals(((Map<String, Object>) o).get("id"))) return (Map<String, Object>) o; return null; }

@@ -40,7 +40,7 @@ jobs:
         run: |
           SO=$(find "$PWD/lib" -name 'libtorrent4j.so' | head -1)
           ok=1
-          for i in 1 2 3; do
+          for i in 1 2 3 4 5; do
             code=0
             timeout 600 java -XX:ErrorFile=$PWD/hs_err_run$i.log -Dlibtorrent4j.jni.path="$SO" -cp out:lib/libtorrent4j.jar in.shazverse.srktorrent.SelfTest /tmp/st$i run$i.txt > /dev/null 2>&1 || code=$?
             { echo "===== run $i (exit $code)"; grep -v "^   \[" run$i.txt || true; } >> report.txt
