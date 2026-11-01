@@ -29,16 +29,24 @@ jobs:
       - name: Start a real WireGuard server on this machine
         shell: bash
         run: |
-          set -e
-          sudo apt-get update -qq && sudo apt-get install -y -qq wireguard-tools >/dev/null
-          umask 077; wg genkey > s.key; wg pubkey < s.key > s.pub; wg genkey > c.key; wg pubkey < c.key > c.pub
-          sudo ip link add wg0 type wireguard
-          sudo wg set wg0 listen-port 51820 private-key s.key peer "$(cat c.pub)" allowed-ips 10.66.66.2/32
-          sudo ip addr add 10.66.66.1/24 dev wg0 && sudo ip link set wg0 up
-          mkdir -p www vpn-report && echo "hello-through-srk-vpn" > www/hello.txt
+          mkdir -p www vpn-report; L=vpn-report/server-setup.txt
+          { uname -a; sudo apt-get update -qq; sudo apt-get install -y -qq wireguard-tools; } >> $L 2>&1
+          umask 077; wg genkey > s.key; wg pubkey < s.key > s.pub; wg genkey > c.key; wg pubkey < c.key > c.pub; umask 022
+          { sudo modprobe wireguard && echo "kernel module ok"; } >> $L 2>&1
+          if ! sudo ip link add wg0 type wireguard >> $L 2>&1; then
+            echo "no kernel WireGuard — using wireguard-go" >> $L
+            { sudo apt-get install -y -qq wireguard-go || go install golang.zx2c4.com/wireguard@latest; } >> $L 2>&1
+            WGGO=$(command -v wireguard-go || echo "$HOME/go/bin/wireguard"); echo "using $WGGO" >> $L
+            sudo "$WGGO" wg0 >> $L 2>&1; sleep 2
+          fi
+          sudo wg set wg0 listen-port 51820 private-key "$PWD/s.key" peer "$(cat c.pub)" allowed-ips 10.66.66.2/32 >> $L 2>&1
+          sudo ip addr add 10.66.66.1/24 dev wg0 >> $L 2>&1; sudo ip link set wg0 up >> $L 2>&1
+          echo "hello-through-srk-vpn" > www/hello.txt
           nohup python3 -m http.server 8080 --bind 10.66.66.1 --directory www > http.log 2>&1 &
           printf '[Interface]\nPrivateKey = %s\nAddress = 10.66.66.2/32\n\n[Peer]\nPublicKey = %s\nEndpoint = 10.0.2.2:51820\nAllowedIPs = 10.66.66.0/24\nPersistentKeepalive = 15\n' "$(cat c.key)" "$(cat s.pub)" > client.conf
-          sudo wg show
+          sleep 1; { sudo wg show; ip addr show wg0; curl -s --max-time 3 http://10.66.66.1:8080/hello.txt; } >> $L 2>&1
+          cat $L
+          sudo wg show wg0 | grep -q "listening port: 51820"
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
