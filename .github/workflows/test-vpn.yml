@@ -39,7 +39,8 @@ jobs:
             WGGO=$(command -v wireguard-go || echo "$HOME/go/bin/wireguard"); echo "using $WGGO" >> $L
             sudo "$WGGO" wg0 >> $L 2>&1; sleep 2
           fi
-          sudo wg set wg0 listen-port 51820 private-key "$PWD/s.key" peer "$(cat c.pub)" allowed-ips 10.66.66.2/32 >> $L 2>&1
+          sudo mkdir -p /etc/wireguard; cat s.key | sudo tee /etc/wireguard/s.key > /dev/null; sudo chmod 600 /etc/wireguard/s.key
+          sudo wg set wg0 listen-port 51820 private-key /etc/wireguard/s.key peer "$(cat c.pub)" allowed-ips 10.66.66.2/32 >> $L 2>&1
           sudo ip addr add 10.66.66.1/24 dev wg0 >> $L 2>&1; sudo ip link set wg0 up >> $L 2>&1
           echo "hello-through-srk-vpn" > www/hello.txt
           nohup python3 -m http.server 8080 --bind 10.66.66.1 --directory www > http.log 2>&1 &
