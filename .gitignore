@@ -7,3 +7,6 @@ local.properties
 slides-app/app/src/main/assets/www/fonts/
 sheets-app/app/src/main/assets/www/fonts/
 notes-app/app/src/main/assets/www/fonts/
+windows-app/node_modules/
+windows-app/dist/
+windows-app/apps/

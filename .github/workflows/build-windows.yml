@@ -1,0 +1,84 @@
+name: Build SRK Office for Windows
+
+on:
+  push:
+    branches: [main]
+    paths: ['windows-app/**', 'app/src/main/assets/**', 'docs-app/app/src/main/assets/**', 'slides-app/app/src/main/assets/**', 'sheets-app/app/src/main/assets/**', 'notes-app/app/src/main/assets/**', '.github/workflows/build-windows.yml']
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Download fonts
+        shell: bash
+        run: |
+          for d in slides-app sheets-app notes-app; do (cd $d && python fetch_fonts.py); done
+
+      - name: Collect the apps
+        shell: bash
+        run: python windows-app/prepare.py
+
+      - name: Build the installer
+        shell: bash
+        working-directory: windows-app
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: |
+          npm install --no-audit --no-fund
+          npx electron-builder --win nsis --x64 --publish never
+
+      - name: Check the installer
+        shell: bash
+        working-directory: windows-app
+        run: |
+          ls -la dist
+          EXE=$(ls dist/SRK-Office-Setup-*.exe | head -1)
+          test -n "$EXE" || { echo 'ERROR: installer missing'; exit 1; }
+          cp "$EXE" SRK-Office-Setup.exe
+
+      - name: Test every app
+        shell: bash
+        working-directory: windows-app
+        run: |
+          SRK_SELFTEST="$PWD/selftest" timeout 240 "dist/win-unpacked/SRK Office.exe" || true
+          cat selftest/report.json || echo 'no report'
+
+      - name: Upload test screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: selftest
+          path: windows-app/selftest
+          if-no-files-found: warn
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: SRK-Office-Setup
+          path: windows-app/SRK-Office-Setup.exe
+          if-no-files-found: error
+
+      - name: Publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "windows-v1.0.${{ github.run_number }}" windows-app/SRK-Office-Setup.exe \
+            --title "SRK Office for Windows 1.0 (build ${{ github.run_number }})" \
+            --notes "Download SRK-Office-Setup.exe and run it on Windows 10 or 11. It installs SRK, SRK Docs, SRK Slides, SRK Sheets and SRK Notes."

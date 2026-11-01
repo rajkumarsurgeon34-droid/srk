@@ -1,0 +1,108 @@
+{
+  "name": "srk-office",
+  "productName": "SRK Office",
+  "version": "1.0.0",
+  "description": "SRK, SRK Docs, SRK Slides, SRK Sheets and SRK Notes for Windows",
+  "author": "ShazVerse Technologies",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis --x64 --publish never"
+  },
+  "devDependencies": {
+    "electron": "^33.4.0",
+    "electron-builder": "25.1.8"
+  },
+  "build": {
+    "appId": "in.shazverse.srkoffice",
+    "productName": "SRK Office",
+    "copyright": "ShazVerse Technologies",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "launcher.html",
+      "apps/**/*",
+      "build/icons/*.png",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "build/icons",
+        "to": "icons"
+      }
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "artifactName": "SRK-Office-Setup-${version}.exe"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": false,
+      "createStartMenuShortcut": true,
+      "shortcutName": "SRK Office",
+      "include": "build/installer.nsh",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "deleteAppDataOnUninstall": false
+    },
+    "fileAssociations": [
+      {
+        "ext": "pdf",
+        "name": "PDF document",
+        "description": "PDF document",
+        "icon": "build/icons/pdf.ico",
+        "role": "Editor"
+      },
+      {
+        "ext": "docx",
+        "name": "Word document",
+        "description": "Word document",
+        "icon": "build/icons/docs.ico",
+        "role": "Editor"
+      },
+      {
+        "ext": "pptx",
+        "name": "PowerPoint presentation",
+        "description": "PowerPoint presentation",
+        "icon": "build/icons/slides.ico",
+        "role": "Editor"
+      },
+      {
+        "ext": [
+          "xlsx",
+          "xlsm",
+          "xls",
+          "ods",
+          "csv"
+        ],
+        "name": "Spreadsheet",
+        "description": "Spreadsheet",
+        "icon": "build/icons/sheets.ico",
+        "role": "Editor"
+      },
+      {
+        "ext": "srknotes",
+        "name": "SRK Notes backup",
+        "description": "SRK Notes backup",
+        "icon": "build/icons/notes.ico",
+        "role": "Editor"
+      }
+    ]
+  }
+}
