@@ -104,7 +104,7 @@ public final class SelfTest {
         check("remove + delete files", C.row(id1) == null && !new File(C.save, big.getName()).exists());
 
         // 8. settings round trip
-        A.e.setSettings("{\"dlLimit\":500,\"ratio\":2}"); Map<String, Object> st = A.waitEvent("settings", 3000);
+        A.e.setSettings("{\"dlLimit\":500,\"ratio\":2}"); Map<String, Object> st = A.waitFor(m -> "settings".equals(m.get("type")) && ((Number) m.get("dlLimit")).intValue() == 500, 3000);
         check("settings saved", st != null && ((Number) st.get("dlLimit")).intValue() == 500);
 
         // 9. bad input
