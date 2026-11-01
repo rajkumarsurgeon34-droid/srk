@@ -118,7 +118,7 @@ public final class SelfTest {
 
     static void write(File f, int size, long seed) throws Exception { f.getParentFile().mkdirs(); Random r = new Random(seed); byte[] b = new byte[size]; r.nextBytes(b); try (FileOutputStream o = new FileOutputStream(f)) { o.write(b); } }
     static boolean same(File a, File b) { try { if (!b.exists() || a.length() != b.length()) return false; return MessageDigest.isEqual(sha(a), sha(b)); } catch (Exception e) { return false; } }
-    static byte[] sha(File f) throws Exception { MessageDigest d = MessageDigest.getInstance("SHA-1"); d.update(TorrentEngine.readAll(new java.io.FileInputStream(f)) ); return d.digest(); }
+    static byte[] sha(File f) throws Exception { MessageDigest d = MessageDigest.getInstance("SHA-1"); try (java.io.InputStream in = new java.io.FileInputStream(f)) { byte[] b = new byte[1 << 16]; int n; while ((n = in.read(b)) > 0) d.update(b, 0, n); } return d.digest(); }
     static void sleep(long ms) { try { Thread.sleep(ms); } catch (InterruptedException ignored) { } }
     static void deleteTree(File f) { File[] k = f.listFiles(); if (k != null) for (File c : k) deleteTree(c); f.delete(); }
 }

@@ -52,7 +52,7 @@ public final class StdioMain {
     static Object call(TorrentEngine e, String name, List<?> args) throws Exception {
         for (Method mt : TorrentEngine.class.getMethods()) {
             if (!mt.getName().equals(name) || mt.getParameterCount() != args.size() || mt.getDeclaringClass() != TorrentEngine.class) continue;
-            if (name.equals("stop") || name.equals("start")) return null;
+            if (name.equals("stop")) return null; // "start" is safe: it only re-sends the settings when already running
             Class<?>[] ps = mt.getParameterTypes(); Object[] v = new Object[ps.length];
             for (int i = 0; i < ps.length; i++) {
                 Object x = args.get(i);
