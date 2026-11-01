@@ -83,6 +83,9 @@ label.f{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:60
 .nc{position:absolute;min-width:60px;z-index:3;border:1px solid transparent;border-radius:4px}
 .nc:hover{border-color:color-mix(in srgb,var(--line) 80%,transparent)}
 .nc.focus{border-color:#b9bdd0;z-index:6}
+.nc.main,.nc.main:hover,.nc.main.focus{border-color:transparent;z-index:3}
+.nc.main .ncb{min-height:3em;padding:4px 2px}
+.nc.main .ncb.empty::before{content:attr(data-ph);color:#9aa0b0;pointer-events:none;position:absolute}
 .ncbar{position:absolute;left:-1px;right:-1px;top:-15px;height:15px;background:#d9dbe6;border-radius:4px 4px 0 0;cursor:move;display:none;touch-action:none}
 .nc.focus .ncbar,.nc:hover .ncbar{display:block}
 .ncbar::after{content:"";position:absolute;left:50%;top:5px;width:24px;height:4px;margin-left:-12px;border-top:1px solid #9aa0b6;border-bottom:1px solid #9aa0b6}

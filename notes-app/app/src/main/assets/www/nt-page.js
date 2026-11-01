@@ -5,6 +5,12 @@ const Page = (() => {
   const RULES = {'': null, narrow: {k: 'lines', s: 22}, college: {k: 'lines', s: 26}, wide: {k: 'lines', s: 32}, gsmall: {k: 'grid', s: 16}, gmed: {k: 'grid', s: 24}, glarge: {k: 'grid', s: 36}};
   const PAD = 28, TOPY = 110;
   const cur = () => p, zoom = () => z;
+  /* every page has one full-width writing area (the "main" item); extra movable note boxes are optional */
+  const mainX = () => (scroller && scroller.clientWidth / z < 600 ? 16 : PAD);
+  const mainW = () => { const vw = scroller ? scroller.clientWidth / z : 800; return Math.round(Math.max(240, Math.min(1100, vw - mainX() - 18))); };
+  function ensureMain(pg){ if (!pg) return; pg.items = pg.items || []; if (pg.items.some(i => i.main)) return; const cand = pg.items.filter(i => i.x <= PAD + 14 && i.y <= TOPY + 70).sort((a, b) => a.y - b.y)[0]; if (cand) cand.main = true; else pg.items.unshift({id: uid(), main: true, x: PAD, y: TOPY, w: 600, html: ''}); }
+  const mainItem = () => p && p.items.find(i => i.main);
+  const mainBody = () => { const it = mainItem(); const n = it && pc && pc.querySelector(`.nc[data-id="${it.id}"]`); return n ? n.querySelector('.ncb') : null; };
 
   /* ---------- sanitising pasted / generated HTML ---------- */
   const OK_TAGS = new Set(['P', 'DIV', 'BR', 'B', 'STRONG', 'I', 'EM', 'U', 'S', 'STRIKE', 'DEL', 'SUB', 'SUP', 'SPAN', 'FONT', 'MARK', 'A', 'UL', 'OL', 'LI', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE', 'PRE', 'CODE', 'TABLE', 'THEAD', 'TBODY', 'TR', 'TD', 'TH', 'IMG', 'HR']);
@@ -31,30 +37,30 @@ const Page = (() => {
   function mountShell(){ scroller = $('#cscroll'); pc = $('#pagec'); if (!pz){ pz = h('div', {class: 'pagez', style: 'position:relative'}); scroller.insertBefore(pz, pc); pz.append(pc); } }
   async function open(page){ mountShell(); await flushNow(); p = page; undo = []; redo = []; lastNc = null; Ink.clearSel(); readOnly = false; $$('.imgbar').forEach(x => x.remove()); render(); lastState = p ? state() : null; scroller.scrollTop = 0; scroller.scrollLeft = 0; UIX.syncUndo(); }
   function close(){ p = null; if (pc) pc.innerHTML = ''; }
-  function layoutW(){ const vw = scroller.clientWidth / z; return Math.max(vw, ...((p && p.items) || []).map(it => it.x + it.w + 40), Ink.bounds().r + 40); }
-  function render(){ if (!pc) mountShell(); pc.innerHTML = ''; pc.className = 'pagec'; if (!p) return;
+  function layoutW(){ const vw = scroller.clientWidth / z; return Math.max(vw, ...((p && p.items) || []).filter(it => !it.main).map(it => it.x + it.w + 40), Ink.bounds().r + 40); }
+  function render(){ if (!pc) mountShell(); pc.innerHTML = ''; pc.className = 'pagec'; if (!p) return; ensureMain(p);
     const rule = RULES[p.rule || '']; if (rule){ pc.classList.add(rule.k === 'lines' ? 'rule-lines' : 'rule-grid'); if (rule.k === 'lines') pc.classList.add('margin'); pc.style.setProperty('--rs', rule.s + 'px'); pc.style.setProperty('--ro', '6px'); } pc.style.background = ''; pc.style.backgroundColor = p.color || '';
-    const t = h('input', {placeholder: 'Page title', value: p.title || '', 'aria-label': 'Page title', spellcheck: 'true'}); t.addEventListener('input', () => { p.title = t.value; M.touch(p); snap(); }); t.addEventListener('keydown', e => { if (e.key === 'Enter'){ e.preventDefault(); const it = p.items[0]; if (it){ const b = pc.querySelector(`.nc[data-id="${it.id}"] .ncb`); b && b.focus(); } else addContainer(PAD, TOPY, true); } });
+    const t = h('input', {placeholder: 'Page title', value: p.title || '', 'aria-label': 'Page title', spellcheck: 'true'}); t.addEventListener('input', () => { p.title = t.value; M.touch(p); snap(); }); t.addEventListener('keydown', e => { if (e.key === 'Enter'){ e.preventDefault(); const b = mainBody(); if (b){ b.focus(); placeCaretEnd(b); } } });
     pc.append(h('div', {class: 'ptitle'}, t, h('div', {class: 'pdate'}, h('span', {}, fmtDate(p.created)), h('span', {}, fmtTime(p.created)))));
     for (const it of p.items || []) pc.append(ncEl(it));
     inkEl = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); inkEl.setAttribute('class', 'inkl'); pc.append(inkEl);
     pc.classList.toggle('draw', mode === 'draw'); Ink.mount(inkEl, p, scroller, what => { commit(what); sizePage(); }); sizePage();
     hydrate(pc).then(sizePage); }
-  function sizePage(){ if (!p || !pc || !scroller.clientWidth) return; const vw = scroller.clientWidth / z, vh = scroller.clientHeight / z; let b = TOPY + 40; for (const n of $$('.nc', pc)) b = Math.max(b, n.offsetTop + n.offsetHeight); b = Math.max(b, Ink.bounds().b); const W = Math.ceil(layoutW()), H = Math.ceil(Math.max(vh, b + vh * .6));
+  function sizePage(){ if (!p || !pc || !scroller.clientWidth) return; const mi = mainItem(); if (mi){ mi.x = mainX(); mi.w = mainW(); const mn = pc.querySelector(`.nc[data-id="${mi.id}"]`); if (mn){ mn.style.left = mi.x + 'px'; mn.style.width = mi.w + 'px'; } } const vw = scroller.clientWidth / z, vh = scroller.clientHeight / z; let b = TOPY + 40; for (const n of $$('.nc', pc)) b = Math.max(b, n.offsetTop + n.offsetHeight); b = Math.max(b, Ink.bounds().b); const W = Math.ceil(layoutW()), H = Math.ceil(Math.max(vh, b + vh * .6));
     pc.style.width = W + 'px'; pc.style.minHeight = H + 'px'; pc.style.height = H + 'px'; pc.style.transform = z === 1 ? '' : `scale(${z})`; pz.style.width = W * z + 'px'; pz.style.height = H * z + 'px'; Ink.size(); }
-  function ncEl(it){ const body = h('div', {class: 'ncb', contenteditable: readOnly ? 'false' : 'true', spellcheck: String(UIX.spell()), html: it.html || ''}); const n = h('div', {class: 'nc', 'data-id': it.id, style: `left:${it.x}px;top:${it.y}px;width:${it.w}px`}, h('div', {class: 'ncbar', title: 'Drag to move'}), body, h('div', {class: 'ncw', title: 'Drag to change the width'}));
+  function ncEl(it){ const body = h('div', {class: 'ncb', contenteditable: readOnly ? 'false' : 'true', spellcheck: String(UIX.spell()), html: it.html || ''}); if (it.main){ if (!(it.html || '').trim()) body.innerHTML = '<p><br></p>'; body.dataset.ph = 'Start typing your notes…'; body.classList.toggle('empty', isEmpty(body)); } const n = it.main ? h('div', {class: 'nc main', 'data-id': it.id, style: `left:${it.x}px;top:${it.y}px;width:${it.w}px`}, body) : h('div', {class: 'nc', 'data-id': it.id, style: `left:${it.x}px;top:${it.y}px;width:${it.w}px`}, h('div', {class: 'ncbar', title: 'Drag to move'}), body, h('div', {class: 'ncw', title: 'Drag to change the width'}));
     body.addEventListener('focus', () => { $$('.nc.focus', pc).forEach(x => x !== n && x.classList.remove('focus')); n.classList.add('focus'); lastNc = n; });
-    body.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== body && !n.contains(document.activeElement)){ n.classList.remove('focus'); if (isEmpty(body)) removeContainer(it.id, true); } }, 150));
-    body.addEventListener('input', e => { if (e.inputType === 'insertParagraph') carryTag(); changed(n); if (e.inputType === 'insertText' && (e.data === ']' || e.data === ' ')) wikiLinks(body); if (e.inputType === 'insertText' && e.data === ' ') autoFormat(body); });
+    body.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== body && !n.contains(document.activeElement)){ n.classList.remove('focus'); if (!it.main && isEmpty(body)) removeContainer(it.id, true); } }, 150));
+    body.addEventListener('input', e => { if (it.main) body.classList.toggle('empty', isEmpty(body)); if (e.inputType === 'insertParagraph') carryTag(); changed(n); if (e.inputType === 'insertText' && (e.data === ']' || e.data === ' ')) wikiLinks(body); if (e.inputType === 'insertText' && e.data === ' ') autoFormat(body); });
     body.addEventListener('paste', e => onPaste(e, body));
     body.addEventListener('keydown', e => onKey(e, body));
-    const bar = n.querySelector('.ncbar'); bar.addEventListener('pointerdown', e => dragStart(e, n, 'move')); n.querySelector('.ncw').addEventListener('pointerdown', e => dragStart(e, n, 'width'));
+    if (!it.main){ n.querySelector('.ncbar').addEventListener('pointerdown', e => dragStart(e, n, 'move')); n.querySelector('.ncw').addEventListener('pointerdown', e => dragStart(e, n, 'width')); }
     return n; }
   const isEmpty = b => !b.textContent.trim() && !b.querySelector('img,.att,.media,table,.tag,hr');
   function changed(n){ const it = p.items.find(x => x.id === n.dataset.id); if (!it) return; it.html = serialize(n.querySelector('.ncb')); M.touch(p); snapSoon(); sizeSoon(); clearFind(false); }
   let sizeT = null; const sizeSoon = () => { clearTimeout(sizeT); sizeT = setTimeout(sizePage, 120); };
   function addContainer(x, y, focus, html = '', w){ if (!p) return null; const vw = scroller.clientWidth / z; const width = w || Math.max(160, Math.min(620, vw - x - 16)); const it = {id: uid(), x: Math.round(x), y: Math.round(y), w: Math.round(width), html}; p.items.push(it); const n = ncEl(it); pc.insertBefore(n, inkEl); if (html) hydrate(n); if (focus){ const b = n.querySelector('.ncb'); b.focus(); placeCaretEnd(b); } M.touch(p); sizePage(); if (html) commit('Add'); return n; }
-  function removeContainer(id, quiet){ if (!p) return; const i = p.items.findIndex(x => x.id === id); if (i < 0) return; p.items.splice(i, 1); const n = pc.querySelector(`.nc[data-id="${id}"]`); n && n.remove(); if (lastNc === n) lastNc = null; M.touch(p); if (!quiet) commit('Delete'); sizePage(); }
+  function removeContainer(id, quiet){ if (!p) return; const i = p.items.findIndex(x => x.id === id); if (i < 0 || p.items[i].main) return; p.items.splice(i, 1); const n = pc.querySelector(`.nc[data-id="${id}"]`); n && n.remove(); if (lastNc === n) lastNc = null; M.touch(p); if (!quiet) commit('Delete'); sizePage(); }
   function placeCaretEnd(el){ const r = document.createRange(); r.selectNodeContents(el); r.collapse(false); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
   function dragStart(e, n, kind){ e.preventDefault(); e.stopPropagation(); const it = p.items.find(x => x.id === n.dataset.id); const sx = e.clientX, sy = e.clientY, ox = it.x, oy = it.y, ow = it.w; const tgt = e.currentTarget; try { tgt.setPointerCapture(e.pointerId); } catch(_){} n.classList.add('focus');
     const mv = ev => { const dx = (ev.clientX - sx) / z, dy = (ev.clientY - sy) / z; if (kind === 'move'){ it.x = Math.max(0, Math.round(ox + dx)); it.y = Math.max(60, Math.round(oy + dy)); n.style.left = it.x + 'px'; n.style.top = it.y + 'px'; } else { it.w = Math.max(80, Math.round(ow + dx)); n.style.width = it.w + 'px'; } };
@@ -68,7 +74,7 @@ const Page = (() => {
     const att = t.closest('.att'); if (att){ e.preventDefault(); attMenu(att, e); return; }
     const a = t.closest('.ncb a'); if (a){ e.preventDefault(); linkMenu(a, e); return; }
     $$('.imgbar').forEach(x => x.remove()); $$('img.sel', pc).forEach(i => i.classList.remove('sel'));
-    if (t === pc || t === inkEl || t.classList.contains('pagez')){ const r = pc.getBoundingClientRect(); const x = (e.clientX - r.left) / z, y = (e.clientY - r.top) / z; if (y < TOPY - 30) return; const hitNc = $$('.nc', pc).find(n => x >= n.offsetLeft - 6 && x <= n.offsetLeft + n.offsetWidth + 6 && y >= n.offsetTop - 6 && y <= n.offsetTop + n.offsetHeight + 6); if (hitNc){ const b = hitNc.querySelector('.ncb'); b.focus(); placeCaretEnd(b); return; } addContainer(x, y - 10, true); } }
+    if (t === pc || t === inkEl || t.classList.contains('pagez')){ const r = pc.getBoundingClientRect(); const x = (e.clientX - r.left) / z, y = (e.clientY - r.top) / z; if (y < TOPY - 30) return; const hitNc = $$('.nc', pc).find(n => x >= n.offsetLeft - 6 && x <= n.offsetLeft + n.offsetWidth + 6 && y >= n.offsetTop - 6 && y <= n.offsetTop + n.offsetHeight + 6); const b = (hitNc ? hitNc.querySelector('.ncb') : null) || mainBody(); if (b){ b.focus(); placeCaretEnd(b); } } }
   function toggleTag(t){ const k = t.dataset.tag; if (!CHECKABLE.has(k)) return; const done = !t.classList.contains('done'); t.classList.toggle('done', done); t.innerHTML = TAG[k].svg(done); const n = t.closest('.nc'); if (n) changed(n); commit('Tick'); }
   function imgBar(img){ $$('.imgbar').forEach(x => x.remove()); $$('img.sel', pc).forEach(i => i.classList.remove('sel')); img.classList.add('sel'); const bar = h('div', {class: 'imgbar'}); const n = img.closest('.nc');
     const set = w => { img.style.width = w; changed(n); commit('Picture size'); bar.remove(); img.classList.remove('sel'); };
@@ -108,7 +114,7 @@ const Page = (() => {
   function activeBody(create = true){ const s = getSelection(); const n = s.anchorNode; const el = n && (n.nodeType === 1 ? n : n.parentElement); let b = el && el.closest && el.closest('.ncb'); if (b && pc.contains(b)) return b;
     if (savedRange){ const se = savedRange.startContainer; const sel = se.nodeType === 1 ? se : se.parentElement; b = sel && sel.closest && sel.closest('.ncb'); if (b && pc.contains(b)){ b.focus({preventScroll: true}); s.removeAllRanges(); s.addRange(savedRange); return b; } }
     if (lastNc && pc.contains(lastNc)){ b = lastNc.querySelector('.ncb'); b.focus({preventScroll: true}); placeCaretEnd(b); return b; }
-    if (!create) return null; const n2 = addContainer(PAD, nextY(), true); return n2 && n2.querySelector('.ncb'); }
+    const mb = mainBody(); if (mb){ mb.focus({preventScroll: true}); placeCaretEnd(mb); return mb; } if (!create) return null; const n2 = addContainer(PAD, nextY(), true); return n2 && n2.querySelector('.ncb'); }
   function nextY(){ let b = TOPY; for (const n of $$('.nc', pc)) b = Math.max(b, n.offsetTop + n.offsetHeight + 24); return b; }
   function exec(cmd, val){ if (!p || readOnly) return; const b = activeBody(); if (!b) return; document.execCommand('styleWithCSS', false, !['bold', 'italic', 'underline', 'strikeThrough'].includes(cmd)); document.execCommand(cmd, false, val); changed(b.closest('.nc')); }
   function block(tag){ exec('formatBlock', '<' + tag + '>'); }
@@ -184,10 +190,11 @@ const Page = (() => {
 
   /* ---------- text for reading aloud, AI and export ---------- */
   const plain = () => p ? [p.title, ...$$('.ncb', pc).map(b => b.innerText)].join('\n\n') : '';
-  function appendHTML(html, where = 'append'){ if (!p) return; const clean = sanitize(html); if (where === 'replace'){ p.items = []; render(); } const last = $$('.nc', pc).sort((a, b) => (b.offsetTop + b.offsetHeight) - (a.offsetTop + a.offsetHeight))[0];
-    if (last && where !== 'new'){ const b = last.querySelector('.ncb'); b.insertAdjacentHTML('beforeend', clean); hydrate(b); changed(last); } else addContainer(PAD, nextY(), false, clean); commit('Copilot'); sizePage(); }
+  function appendHTML(html, where = 'append'){ if (!p) return; const clean = sanitize(html); if (where === 'replace'){ p.items = []; render(); } const mb = mainBody(); const last = mb ? mb.closest('.nc') : $$('.nc', pc).sort((a, b) => (b.offsetTop + b.offsetHeight) - (a.offsetTop + a.offsetHeight))[0];
+    if (last && where !== 'new'){ if (mb && isEmpty(mb)) mb.innerHTML = '';  const b = last.querySelector('.ncb'); b.insertAdjacentHTML('beforeend', clean); hydrate(b); changed(last); } else addContainer(PAD, nextY(), false, clean); commit('Copilot'); sizePage(); }
 
+  function addToMain(html){ const mb = mainBody(); if (!mb) return; const clean = sanitize(html); if (isEmpty(mb)) mb.innerHTML = clean; else mb.insertAdjacentHTML('beforeend', clean); mb.classList.remove('empty'); hydrate(mb); changed(mb.closest('.nc')); sizePage(); placeCaretEnd(mb); }
   function init(){ mountShell(); try { document.execCommand('defaultParagraphSeparator', false, 'p'); } catch(e){} pc.addEventListener('click', onPageClick); window.addEventListener('resize', () => sizePage()); try { let lw = 0, lh = 0; new ResizeObserver(() => { const w = scroller.clientWidth, hh = scroller.clientHeight; if (w && (w !== lw || hh !== lh)){ lw = w; lh = hh; sizePage(); } }).observe(scroller); } catch(e){} }
   return {init, open, close, cur, render, sizePage, zoom, setZoom, setMode, mode: () => mode, exec, block, insertHTML, insertTag, stamp, linkDialog, insertTable, tableOp, inTable, insertImage, insertFile, insertMedia, insertPDF, setColor, setRule, RULES, doUndo, doRedo, canUndo, canRedo, commit, flushNow, startSnap,
-    find, clearFind, plain, appendHTML, sanitize, serialize, hydrate, addContainer, activeBody, setReadOnly, inkSelBar: () => UIX.inkSelBar(), removeContainer, nextY: () => pc ? nextY() : TOPY, PAD, TOPY};
+    find, clearFind, plain, appendHTML, addToMain, ensureMain, sanitize, serialize, hydrate, addContainer, activeBody, setReadOnly, inkSelBar: () => UIX.inkSelBar(), removeContainer, nextY: () => pc ? nextY() : TOPY, PAD, TOPY};
 })();
