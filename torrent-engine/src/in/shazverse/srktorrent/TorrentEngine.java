@@ -96,6 +96,7 @@ public final class TorrentEngine {
         File state = new File(data, "session.dat");
         try { params = state.exists() ? new SessionParams(readAll(state)) : new SessionParams(); } catch (Throwable e) { params = new SessionParams(); }
         params.setSettings(sp);
+        if ("android".equals(host.platform())) { try { params.setPosixDiskIO(); } catch (Throwable ignored) { } } // plain read/write works best with Android storage
         sm.addListener(new AlertListener() {
             @Override public int[] types() { return null; }
             @Override public void alert(Alert<?> a) { try { onAlert(a); } catch (Throwable e) { log("alert " + e); } }

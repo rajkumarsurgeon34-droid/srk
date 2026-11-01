@@ -1,0 +1,72 @@
+plugins {
+    id 'com.android.application'
+}
+
+def lt4j = new File(rootDir, '../torrent-engine/LT4J_VERSION').text.trim()
+
+android {
+    namespace 'in.shazverse.srktorrent'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'in.shazverse.srktorrent'
+        minSdk 28
+        targetSdk 35
+        versionCode 1
+        versionName '1.0.0'
+        ndk { abiFilters 'arm64-v8a', 'armeabi-v7a' }
+    }
+
+    // A fixed key, so every new build installs over the old one without uninstalling
+    signingConfigs {
+        srk {
+            storeFile file('srk.keystore')
+            storePassword 'srk-store-2026'
+            keyAlias 'srk'
+            keyPassword 'srk-store-2026'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.srk
+        }
+        debug {
+            signingConfig signingConfigs.srk
+        }
+    }
+
+    // the torrent engine is shared with the Windows app
+    sourceSets {
+        main {
+            java {
+                srcDirs += '../../torrent-engine/src'
+                exclude '**/SelfTest.java', '**/StdioMain.java'
+            }
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    androidResources {
+        noCompress 'js', 'html', 'css'
+    }
+
+    packaging {
+        jniLibs { useLegacyPackaging true }
+    }
+}
+
+dependencies {
+    implementation platform('org.jetbrains.kotlin:kotlin-bom:1.8.22')
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'androidx.core:core:1.13.1'
+    implementation 'androidx.webkit:webkit:1.12.1'
+    implementation "org.libtorrent4j:libtorrent4j:${lt4j}"
+    implementation "org.libtorrent4j:libtorrent4j-android-arm64:${lt4j}"
+    implementation "org.libtorrent4j:libtorrent4j-android-arm:${lt4j}"
+}
