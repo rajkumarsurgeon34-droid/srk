@@ -2,7 +2,7 @@
   "name": "srk-office",
   "productName": "SRK Office",
   "version": "1.0.0",
-  "description": "SRK, SRK Docs, SRK Slides, SRK Sheets and SRK Notes for Windows",
+  "description": "SRK, SRK Docs, SRK Slides, SRK Sheets, SRK Notes and SRK Share for Windows",
   "author": "ShazVerse Technologies",
   "main": "main.js",
   "private": true,
@@ -28,7 +28,8 @@
       "launcher.html",
       "apps/**/*",
       "build/icons/*.png",
-      "package.json"
+      "package.json",
+      "share-engine.js"
     ],
     "extraResources": [
       {

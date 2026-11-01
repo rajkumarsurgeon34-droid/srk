@@ -2,7 +2,7 @@
    Each app is the same web app as on Android; this file gives it what the Android shell gave it
    (saving, sharing, printing, opening files, internet for Copilot) through the same SRKAndroid bridge. */
 'use strict';
-const { app, BrowserWindow, protocol, net, ipcMain, dialog, shell, Menu, session, nativeImage } = require('electron');
+const { app, BrowserWindow, protocol, net, ipcMain, dialog, shell, Menu, session, nativeImage, clipboard } = require('electron');
 const path = require('path'), fs = require('fs'), os = require('os'), { pathToFileURL } = require('url');
 
 const APPS = {
@@ -11,6 +11,7 @@ const APPS = {
   slides: { name: 'SRK Slides', color: '#E8710A', exts: ['pptx', 'ppt', 'odp'] },
   sheets: { name: 'SRK Sheets', color: '#1E7B47', exts: ['xlsx', 'xlsm', 'xls', 'xlsb', 'ods', 'csv', 'tsv'] },
   notes:  { name: 'SRK Notes',  color: '#7B2FB0', exts: ['srknotes'] },
+  share:  { name: 'SRK Share',  color: '#0B8A87', exts: [] },
 };
 const MIME = { html: 'text/html; charset=utf-8', js: 'text/javascript; charset=utf-8', css: 'text/css; charset=utf-8', json: 'application/json', txt: 'text/plain; charset=utf-8', svg: 'image/svg+xml', png: 'image/png', jpg: 'image/jpeg', woff2: 'font/woff2', woff: 'font/woff', ttf: 'font/ttf', wasm: 'application/wasm', map: 'application/json' };
 const iconPath = k => app.isPackaged ? path.join(process.resourcesPath, 'icons', k + '.ico') : path.join(__dirname, 'build', 'icons', k + '.ico');
@@ -128,6 +129,40 @@ ipcMain.on('srk:pickAndOpen', async e => {
   if (!r.canceled && r.filePaths[0]) { const { key, file } = parseArgs(['x', r.filePaths[0]]); if (key) openApp(key, file); }
 });
 
+/* ---------- SRK Share: nearby file sharing (same protocol as the Android app) ---------- */
+const { ShareEngine } = require('./share-engine.js');
+let share = null; const shareQueue = []; let shareReady = false;
+function shareWins() { return [...wins.values()].filter(w => w.key === 'share' && !w.win.isDestroyed()); }
+function shareEngine() {
+  if (share) return share;
+  const pf = path.join(app.getPath('userData'), 'share.json'); let prefs = {}; try { prefs = JSON.parse(fs.readFileSync(pf, 'utf8')); } catch (e) { }
+  share = new ShareEngine({ name: os.hostname(), platform: 'windows', saveDir: path.join(app.getPath('downloads'), 'SRK Share'),
+    prefs: { get: k => prefs[k], set: (k, v) => { prefs[k] = v; try { fs.writeFileSync(pf, JSON.stringify(prefs)); } catch (e) { } } },
+    emit: ev => { const ws = shareWins(); if (!ws.length || !shareReady) { if (ev.type !== 'progress' && shareQueue.length < 500) shareQueue.push(ev); if (ev.type === 'offer') notifyOffer(ev); return; }
+      const js = `window.__shareEvent && window.__shareEvent(${JSON.stringify(JSON.stringify(ev))})`; for (const w of ws) w.win.webContents.executeJavaScript(js).catch(() => { });
+      if (ev.type === 'offer') for (const w of ws) { if (!w.win.isFocused()) w.win.flashFrame(true); } } });
+  return share;
+}
+function notifyOffer(ev) { try { const { Notification } = require('electron'); const n = new Notification({ title: `${ev.from && ev.from.name || 'A device'} wants to send you ${ev.items.length} file${ev.items.length === 1 ? '' : 's'}`, body: 'Open SRK Share to accept', icon: iconPath('share') }); n.on('click', () => openApp('share')); n.show(); } catch (e) { } }
+const shareCalls = {
+  start: async () => { shareReady = true; await shareEngine().start(); const q = shareQueue.splice(0); const ws = shareWins(); for (const ev of q) for (const w of ws) w.win.webContents.executeJavaScript(`window.__shareEvent(${JSON.stringify(JSON.stringify(ev))})`).catch(() => { }); },
+  setName: n => shareEngine().setName(n),
+  pickFiles: async (e) => { const r = await dialog.showOpenDialog(BrowserWindow.fromWebContents(e.sender), { title: 'Choose files to send', properties: ['openFile', 'multiSelections'] }); if (!r.canceled) shareEngine().addPaths(r.filePaths); },
+  addPaths: (e, paths) => shareEngine().addPaths((paths || []).filter(Boolean)),
+  forget: (e, id) => shareEngine().forget(id),
+  send: (e, peers, files, text) => shareEngine().sendTo(JSON.parse(peers || '[]'), JSON.parse(files || '[]'), text || ''),
+  respond: (e, id, accept, always) => shareEngine().respond(id, accept, always),
+  cancel: (e, id) => shareEngine().cancel(id),
+  connect: (e, addr) => shareEngine().connect(addr).then(i => shareEngine().emit({ type: 'toast', msg: 'Connected to ' + i.name })).catch(x => shareEngine().emit({ type: 'toast', msg: x.message })),
+  untrust: (e, id) => shareEngine().untrust(id),
+  copy: (e, t) => clipboard.writeText(String(t || '')),
+  open: (e, id, ref) => { const f = shareEngine().ref(id) || ref; if (f) shell.openPath(f).then(err => { if (err) shell.showItemInFolder(f); }); },
+  showInFolder: (e, ref) => { if (ref) shell.showItemInFolder(ref); },
+  openFolder: () => { const d = path.join(app.getPath('downloads'), 'SRK Share'); fs.mkdirSync(d, { recursive: true }); shell.openPath(d); },
+};
+ipcMain.on('share:call', (e, name, args) => { const f = shareCalls[name]; if (!f) return; try { const r = name === 'start' || name === 'setName' ? f(...args) : f(e, ...args); if (r && r.catch) r.catch(err => console.error(err)); } catch (err) { console.error(err); } });
+app.on('before-quit', () => { try { if (share) share.stop(); } catch (e) { } });
+
 /* ---------- app files and files opened from Explorer, served at srk://<app>/... ---------- */
 function serve(req) {
   const u = new URL(req.url); const key = u.hostname;
@@ -169,7 +204,7 @@ async function selftest(dir) {
     win.webContents.on('did-fail-load', (e, code, desc, url) => errs.push('LOAD FAIL ' + desc + ' ' + url));
     win.webContents.on('render-process-gone', (e, d) => errs.push('CRASH ' + d.reason));
     await new Promise(r => { win.webContents.once('did-finish-load', r); setTimeout(r, 15000); }); await wait(6000);
-    let info = null; try { info = await win.webContents.executeJavaScript(`JSON.stringify({bridge: typeof window.SRKAndroid === 'object' && typeof SRKAndroid.saveFile, windows: !!window.SRK_WINDOWS, text: document.body.innerText.slice(0, 300), fonts: [...document.fonts].filter(f => f.status === 'loaded').length, idb: typeof indexedDB})`); } catch (e) { info = 'eval failed: ' + e.message; }
+    let info = null; try { info = await win.webContents.executeJavaScript(`JSON.stringify({share: typeof window.SRKShare === 'object' ? (document.getElementById('meName')||{}).textContent : null, bridge: typeof window.SRKAndroid === 'object' && typeof SRKAndroid.saveFile, windows: !!window.SRK_WINDOWS, text: document.body.innerText.slice(0, 300), fonts: [...document.fonts].filter(f => f.status === 'loaded').length, idb: typeof indexedDB})`); } catch (e) { info = 'eval failed: ' + e.message; }
     try { const img = await win.webContents.capturePage(); fs.writeFileSync(path.join(dir, key + '.png'), img.toPNG()); } catch (e) { errs.push('capture ' + e.message); }
     report[key] = { info, errors: errs }; fs.writeFileSync(path.join(dir, 'report.json'), JSON.stringify(report, null, 2)); win.destroy(); await wait(800);
   }

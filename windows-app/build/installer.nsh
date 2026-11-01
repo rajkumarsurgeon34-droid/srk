@@ -5,11 +5,13 @@
   CreateShortCut "$SMPROGRAMS\SRK Slides.lnk" "$INSTDIR\SRK Office.exe" "--app=slides" "$INSTDIR\resources\icons\slides.ico" 0
   CreateShortCut "$SMPROGRAMS\SRK Sheets.lnk" "$INSTDIR\SRK Office.exe" "--app=sheets" "$INSTDIR\resources\icons\sheets.ico" 0
   CreateShortCut "$SMPROGRAMS\SRK Notes.lnk" "$INSTDIR\SRK Office.exe" "--app=notes" "$INSTDIR\resources\icons\notes.ico" 0
+  CreateShortCut "$SMPROGRAMS\SRK Share.lnk" "$INSTDIR\SRK Office.exe" "--app=share" "$INSTDIR\resources\icons\share.ico" 0
   CreateShortCut "$DESKTOP\SRK.lnk" "$INSTDIR\SRK Office.exe" "--app=pdf" "$INSTDIR\resources\icons\pdf.ico" 0
   CreateShortCut "$DESKTOP\SRK Docs.lnk" "$INSTDIR\SRK Office.exe" "--app=docs" "$INSTDIR\resources\icons\docs.ico" 0
   CreateShortCut "$DESKTOP\SRK Slides.lnk" "$INSTDIR\SRK Office.exe" "--app=slides" "$INSTDIR\resources\icons\slides.ico" 0
   CreateShortCut "$DESKTOP\SRK Sheets.lnk" "$INSTDIR\SRK Office.exe" "--app=sheets" "$INSTDIR\resources\icons\sheets.ico" 0
   CreateShortCut "$DESKTOP\SRK Notes.lnk" "$INSTDIR\SRK Office.exe" "--app=notes" "$INSTDIR\resources\icons\notes.ico" 0
+  CreateShortCut "$DESKTOP\SRK Share.lnk" "$INSTDIR\SRK Office.exe" "--app=share" "$INSTDIR\resources\icons\share.ico" 0
 !macroend
 !macro customInstall
   !insertmacro srkShortcuts
@@ -25,4 +27,6 @@
   Delete "$DESKTOP\SRK Slides.lnk"
   Delete "$DESKTOP\SRK Sheets.lnk"
   Delete "$DESKTOP\SRK Notes.lnk"
+  Delete "$SMPROGRAMS\SRK Share.lnk"
+  Delete "$DESKTOP\SRK Share.lnk"
 !macroend

@@ -3,7 +3,7 @@ name: Build SRK Android APK
 on:
   push:
     branches: [main]
-    paths-ignore: ['docs-app/**', 'slides-app/**', 'sheets-app/**', '.github/workflows/fetch-libs.yml', '.github/workflows/build-sheets-apk.yml', 'README.md', '.github/workflows/build-docs-apk.yml', '.github/workflows/build-slides-apk.yml', '.github/workflows/verify-apks.yml']
+    paths-ignore: ['notes-app/**', 'share-app/**', 'windows-app/**', '.github/workflows/build-windows.yml', '.github/workflows/build-notes-apk.yml', '.github/workflows/build-share-apk.yml', 'docs-app/**', 'slides-app/**', 'sheets-app/**', '.github/workflows/fetch-libs.yml', '.github/workflows/build-sheets-apk.yml', 'README.md', '.github/workflows/build-docs-apk.yml', '.github/workflows/build-slides-apk.yml', '.github/workflows/verify-apks.yml']
   workflow_dispatch: {}
 
 permissions:
