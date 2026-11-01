@@ -67,7 +67,7 @@ public class MainActivity extends AppCompatActivity implements AndroidHost.Page 
     @Override protected void onNewIntent(Intent intent) { super.onNewIntent(intent); takeShared(intent); if (pageStarted) addIncoming(); }
     @Override protected void onResume() { super.onResume(); resumed = true; }
     @Override protected void onPause() { resumed = false; super.onPause(); }
-    @Override protected void onDestroy() { host.detach(this); if (!engine.busy() && isFinishing()) ShareService.stop(this); super.onDestroy(); }
+    @Override protected void onDestroy() { host.detach(this); if (isFinishing() && !engine.busy()) deleteTree(new File(getCacheDir(), "outgoing")); if (!engine.busy() && isFinishing()) ShareService.stop(this); super.onDestroy(); }
 
     /* ---------- files shared into the app ---------- */
     private void takeShared(Intent i) {
@@ -76,16 +76,23 @@ public class MainActivity extends AppCompatActivity implements AndroidHost.Page 
         else if (Intent.ACTION_SEND_MULTIPLE.equals(i.getAction())) { ArrayList<Uri> l = i.getParcelableArrayListExtra(Intent.EXTRA_STREAM); if (l != null) incoming.addAll(l); }
     }
     private String pendingText;
+    private static void deleteTree(File f) { File[] k = f.listFiles(); if (k != null) for (File c : k) deleteTree(c); f.delete(); }
     private void addIncoming() {
-        if (!incoming.isEmpty()) { List<Object> files = new ArrayList<>(); for (Uri u : incoming) { Map<String, Object> f = register(u); if (f != null) files.add(f); } incoming.clear(); if (!files.isEmpty()) host.emit(Json.str(Json.map("type", "picked", "files", files))); }
+        if (!incoming.isEmpty()) { final List<Uri> take = new ArrayList<>(incoming); incoming.clear(); new Thread(() -> { List<Object> files = new ArrayList<>(); for (Uri u : take) { Map<String, Object> f = register(u); if (f != null) files.add(f); } if (!files.isEmpty()) host.emit(Json.str(Json.map("type", "picked", "files", files))); }).start(); }
         if (pendingText != null) { host.emit(Json.str(Json.map("type", "toast", "msg", "Pick who to send the text to, then tap Text"))); copyToClipboard(pendingText); pendingText = null; }
     }
     private Map<String, Object> register(Uri u) {
         String name = "file"; long size = -1;
         try (Cursor c = getContentResolver().query(u, new String[]{OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE}, null, null, null)) { if (c != null && c.moveToFirst()) { if (!c.isNull(0)) name = c.getString(0); if (!c.isNull(1)) size = c.getLong(1); } } catch (Exception ignored) { }
         if (size < 0) { try (android.content.res.AssetFileDescriptor fd = getContentResolver().openAssetFileDescriptor(u, "r")) { if (fd != null) size = fd.getLength(); } catch (Exception ignored) { } }
-        if (size < 0) return null;
         String mime = getContentResolver().getType(u);
+        if (name.indexOf('.') < 0 && mime != null) { String ext = MimeTypeMap.getSingleton().getExtensionFromMimeType(mime); if (ext != null) name = name + "." + ext; }
+        if (size < 0) { // cloud files (Drive etc.) that don't report a size: copy them first so the receiver knows the size
+            try { File dir = new File(getCacheDir(), "outgoing/" + System.nanoTime()); dir.mkdirs(); File f = new File(dir, name.replaceAll("[\\\\/:*?\"<>|]", "_"));
+                try (java.io.InputStream in = getContentResolver().openInputStream(u); java.io.OutputStream out = new java.io.FileOutputStream(f)) { if (in == null) return null; byte[] buf = new byte[256 * 1024]; int n; while ((n = in.read(buf)) > 0) out.write(buf, 0, n); }
+                size = f.length(); u = Uri.fromFile(f);
+            } catch (Exception e) { return null; }
+        }
         String id = engine.addFile(name, size, mime, u.toString()); return engine.fileInfo(id);
     }
 
@@ -104,12 +111,31 @@ public class MainActivity extends AppCompatActivity implements AndroidHost.Page 
         new Thread(() -> { List<Object> files = new ArrayList<>(); for (Uri u : uris) { Map<String, Object> f = register(u); if (f != null) files.add(f); } if (!files.isEmpty()) host.emit(Json.str(Json.map("type", "picked", "files", files))); else host.emit(Json.str(Json.map("type", "toast", "msg", "Couldn’t read those files"))); }).start();
     }
 
+    /** media → the system photo picker (full-quality originals, incl. .mov/.mp4); docs/audio → file picker limited to those types; any → every file */
+    private void pick(String kind) {
+        if ("media".equals(kind) && Build.VERSION.SDK_INT >= 33) {
+            Intent i = new Intent(android.provider.MediaStore.ACTION_PICK_IMAGES); i.putExtra(android.provider.MediaStore.EXTRA_PICK_IMAGES_MAX, android.provider.MediaStore.getPickImagesMaxLimit());
+            try { startActivityForResult(i, REQ_PICK); return; } catch (Exception ignored) { }
+        }
+        Intent i = new Intent(Intent.ACTION_GET_CONTENT); i.addCategory(Intent.CATEGORY_OPENABLE); i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true); i.setType("*/*");
+        String[] types = null;
+        if ("media".equals(kind)) types = new String[]{"image/*", "video/*"};
+        else if ("audio".equals(kind)) types = new String[]{"audio/*"};
+        else if ("docs".equals(kind)) types = new String[]{"application/pdf", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel.sheet.macroEnabled.12",
+            "application/vnd.ms-powerpoint", "application/vnd.openxmlformats-officedocument.presentationml.presentation", "text/*", "application/rtf",
+            "application/vnd.oasis.opendocument.text", "application/vnd.oasis.opendocument.spreadsheet", "application/vnd.oasis.opendocument.presentation"};
+        if (types != null) i.putExtra(Intent.EXTRA_MIME_TYPES, types);
+        try { startActivityForResult(i, REQ_PICK); }
+        catch (ActivityNotFoundException e) { try { startActivityForResult(Intent.createChooser(i, "Choose files to send"), REQ_PICK); } catch (Exception x) { Toast.makeText(this, "No app found to pick files", Toast.LENGTH_SHORT).show(); } }
+    }
+
     /* ---------- the bridge the page calls (same names as on Windows) ---------- */
     private class Bridge {
         @JavascriptInterface public void start() { runOnUiThread(() -> { engine.start(); host.pageReady(); pageStarted = true; addIncoming(); }); }
         @JavascriptInterface public void setName(String n) { engine.setName(n); }
-        @JavascriptInterface public void pickFiles() { runOnUiThread(() -> { Intent i = new Intent(Intent.ACTION_GET_CONTENT); i.setType("*/*"); i.addCategory(Intent.CATEGORY_OPENABLE); i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
-            try { startActivityForResult(Intent.createChooser(i, "Choose files to send"), REQ_PICK); } catch (ActivityNotFoundException e) { Toast.makeText(MainActivity.this, "No app found to pick files", Toast.LENGTH_SHORT).show(); } }); }
+        @JavascriptInterface public void pickFiles() { pickFiles("any"); }
+        @JavascriptInterface public void pickFiles(String kind) { runOnUiThread(() -> pick(kind == null ? "any" : kind)); }
         @JavascriptInterface public void forget(String id) { engine.forget(id); }
         @JavascriptInterface public void send(String peersJson, String filesJson, String text) { List<String> p = new ArrayList<>(), f = new ArrayList<>(); Object a = Json.parse(peersJson), b = Json.parse(filesJson); if (a instanceof List) for (Object x : (List<?>) a) p.add(String.valueOf(x)); if (b instanceof List) for (Object x : (List<?>) b) f.add(String.valueOf(x)); engine.send(p, f, text); }
         @JavascriptInterface public void respond(String offerId, boolean accept, boolean always) { engine.respond(offerId, accept, always); }

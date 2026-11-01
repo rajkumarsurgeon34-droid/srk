@@ -47,12 +47,14 @@ h2 .sp{flex:1}
 .scan p{margin:0;max-width:420px}
 .tray{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:12px;display:flex;flex-direction:column;gap:10px}
 .chips{display:flex;flex-wrap:wrap;gap:6px}
-.chip{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:5px 6px 5px 10px;border-radius:999px;background:var(--sunk);font-size:13px}
+.chip{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:4px 6px 4px 4px;border-radius:999px;background:var(--sunk);font-size:13px}
 .chip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px}.chip small{color:var(--muted)}.chip button{border:0;background:none;cursor:pointer;color:var(--muted);width:22px;height:22px;border-radius:50%;display:grid;place-items:center;padding:0}.chip button:hover{background:var(--line)}.chip button svg{width:14px;height:14px}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.row .grow{flex:1}
 .list{display:flex;flex-direction:column;gap:8px}
 .tr{display:grid;grid-template-columns:auto 1fr auto;gap:4px 12px;align-items:center;padding:10px 12px;background:var(--surface);border-radius:14px;border:1px solid var(--line)}
-.tr .ic{width:38px;height:38px;border-radius:10px;display:grid;place-items:center;background:var(--sunk);color:var(--muted);grid-row:span 2}.tr .ic svg{width:20px;height:20px}
+.tr .ic{width:38px;height:38px;border-radius:10px;display:grid;place-items:center;background:var(--sunk);color:var(--muted);grid-row:span 2;position:relative}.tr .ic svg{width:20px;height:20px}.tr .ic.kind{background:none}
+.kb{display:inline-grid;place-items:center;border-radius:10px;flex:none}.kb svg{width:58%;height:58%}.chip .kb{border-radius:50%}
+.tr .ic .dir{position:absolute;right:-4px;bottom:-4px;width:18px;height:18px;border-radius:50%;background:var(--surface);display:grid;place-items:center;color:var(--muted);box-shadow:0 0 0 1px var(--line)}.tr .ic .dir svg{width:12px;height:12px}.tr.in .ic .dir{color:var(--accent)}
 .tr.in .ic{color:var(--accent);background:var(--accent-soft)}
 .tr b{font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .tr .meta{font-size:12px;color:var(--muted);grid-column:2;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-variant-numeric:tabular-nums}

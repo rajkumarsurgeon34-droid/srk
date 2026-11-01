@@ -12,6 +12,20 @@
     up: S('<path d="M12 19V6M6 11l6-6 6 6"/>'), down: S('<path d="M12 5v13M6 13l6 6 6-6"/>'), file: S('<path d="M14 3H6v18h12V7z"/><path d="M14 3v4h4"/>'), open: S('<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 01-1 1H5a1 1 0 01-1-1V7a1 1 0 011-1h5"/>'), folder: S('<path d="M3 6h6l2 2h10v11H3z"/>'),
     link: S('<path d="M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1-1"/>'), shield: S('<path d="M12 3l8 3v6c0 4.5-3.4 8.2-8 9-4.6-.8-8-4.5-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/>'), trash: S('<path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13"/>'), copy: S('<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 00-1-1H5a1 1 0 00-1 1v10a1 1 0 001 1h3"/>'), info: S('<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/>'), moon: S('<path d="M20 14.5A8 8 0 019.5 4a8 8 0 1010.5 10.5z"/>'),
   };
+  /* what kind of file is it: coloured badge shown on chips and in the activity list */
+  const KINDS = [
+    [/^(jpe?g|png|gif|webp|heic|heif|bmp|tiff?|svg|raw|dng)$/, 'Photo', '#1E8E3E', '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.8"/><path d="M21 16l-5-5-8 8"/>'],
+    [/^(mp4|mov|m4v|mkv|avi|3gp|webm|wmv|flv|mpe?g|ts)$/, 'Video', '#D93025', '<rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3"/>'],
+    [/^pdf$/, 'PDF', '#C5221F', '<path d="M14 3H6v18h12V7z"/><path d="M14 3v4h4"/><path d="M8.5 16v-4h1.3a1.2 1.2 0 010 2.4H8.5M12.5 12v4h1a2 2 0 000-4z"/>'],
+    [/^(docx?|odt|rtf|pages)$/, 'Word', '#2F5DD8', '<path d="M14 3H6v18h12V7z"/><path d="M14 3v4h4"/><path d="M8.5 11l1.3 6 1.7-4.5 1.7 4.5 1.3-6"/>'],
+    [/^(xlsx?|xlsm|csv|ods|numbers)$/, 'Excel', '#1E7B47', '<path d="M14 3H6v18h12V7z"/><path d="M14 3v4h4"/><path d="M9 11l5 6M14 11l-5 6"/>'],
+    [/^(pptx?|odp|key)$/, 'PowerPoint', '#C2410C', '<path d="M14 3H6v18h12V7z"/><path d="M14 3v4h4"/><path d="M9.5 17v-6h2a1.8 1.8 0 010 3.6h-2"/>'],
+    [/^(mp3|m4a|aac|wav|flac|ogg|opus|amr|wma)$/, 'Audio', '#7B2FB0', '<path d="M9 18V6l11-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/>'],
+    [/^(zip|rar|7z|tar|gz|tgz)$/, 'Archive', '#6D4C41', '<path d="M5 3h14v18H5z"/><path d="M12 3v2M12 7v2M12 11v2M10.5 15h3v3h-3z"/>'],
+    [/^apk$/, 'App', '#0B8A87', '<rect x="6" y="3" width="12" height="18" rx="2"/><path d="M10 18h4"/>'],
+  ];
+  const kindOf = name => { const ext = (String(name).split('.').pop() || '').toLowerCase(); for (const k of KINDS) if (k[0].test(ext)) return k; return [null, 'File', '#56707a', '<path d="M14 3H6v18h12V7z"/><path d="M14 3v4h4"/>']; };
+  const badge = (name, sz = 38) => { const k = kindOf(name); return `<span class="kb" style="width:${sz}px;height:${sz}px;background:${k[2]}1f;color:${k[2]}" title="${k[1]}">${S(k[3])}</span>`; };
   const B = window.SRKShare; const store = { get: (k, d) => { try { const v = localStorage.getItem('srk-share-' + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } }, set: (k, v) => { try { localStorage.setItem('srk-share-' + k, JSON.stringify(v)); } catch (e) { } } };
   const st = { me: null, peers: [], sel: new Set(store.get('sel', [])), files: [], acts: store.get('acts', []), offers: [] };
   const size = n => { n = +n || 0; return n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(0) + ' KB' : n < 1073741824 ? (n / 1048576).toFixed(1) + ' MB' : (n / 1073741824).toFixed(2) + ' GB'; };
@@ -37,10 +51,10 @@
         b.addEventListener('click', () => { if (st.sel.has(p.id)) st.sel.delete(p.id); else st.sel.add(p.id); saveSel(); render(); }); g.append(b); } w.append(g); }
     // what to send
     const tray = h('div', { class: 'tray' }); const total = st.files.reduce((a, f) => a + f.size, 0);
-    if (st.files.length){ const chips = h('div', { class: 'chips' }); for (const f of st.files) { const x = h('button', { type: 'button', 'aria-label': 'Remove ' + f.name, html: IC.x }); x.addEventListener('click', () => { st.files = st.files.filter(y => y !== f); call('forget', f.id); render(); }); chips.append(h('span', { class: 'chip' }, h('span', {}, f.name), h('small', {}, size(f.size)), x)); } tray.append(chips); }
-    else tray.append(h('p', { class: 'hint' }, window.SRK_WINDOWS ? 'Choose files, or drag them onto this window.' : 'Choose photos, videos, documents or any files — as many as you like.'));
+    if (st.files.length){ const chips = h('div', { class: 'chips' }); for (const f of st.files) { const x = h('button', { type: 'button', 'aria-label': 'Remove ' + f.name, html: IC.x }); x.addEventListener('click', () => { st.files = st.files.filter(y => y !== f); call('forget', f.id); render(); }); chips.append(h('span', { class: 'chip', html: badge(f.name, 24) }, h('span', {}, f.name), h('small', {}, size(f.size)), x)); } tray.append(chips); }
+    else tray.append(h('p', { class: 'hint' }, window.SRK_WINDOWS ? 'Choose files or drag them onto this window — videos, photos, PDF, Word, Excel or any other file, any size.' : 'Photos, videos (.mp4, .mov), PDF, Word, Excel, PowerPoint, music, apps or any other file — as many as you like, any size, original quality.'));
     const n = st.sel.size; const sendBtn = h('button', { class: 'btn primary grow', type: 'button', html: IC.send + `<span>${!st.files.length ? 'Send' : n ? `Send ${st.files.length} file${st.files.length === 1 ? '' : 's'} (${size(total)}) to ${n === 1 ? (peers.find(p => st.sel.has(p.id)) || {}).name : n + ' devices'}` : 'Pick who to send to'}</span>` }); sendBtn.disabled = !st.files.length || !n; sendBtn.addEventListener('click', sendNow);
-    tray.append(h('div', { class: 'row' }, h('button', { class: 'btn', type: 'button', onclick: () => call('pickFiles'), html: IC.plus + '<span>Files</span>' }), h('button', { class: 'btn', type: 'button', onclick: textDlg, html: IC.text + '<span>Text</span>' }), sendBtn, st.files.length ? h('button', { class: 'btn sm', type: 'button', onclick: () => { st.files.forEach(f => call('forget', f.id)); st.files = []; render(); } }, 'Clear') : null));
+    tray.append(h('div', { class: 'row' }, h('button', { class: 'btn', type: 'button', onclick: e => pickMenu(e.currentTarget), html: IC.plus + '<span>Files</span>' }), h('button', { class: 'btn', type: 'button', onclick: textDlg, html: IC.text + '<span>Text</span>' }), sendBtn, st.files.length ? h('button', { class: 'btn sm', type: 'button', onclick: () => { st.files.forEach(f => call('forget', f.id)); st.files = []; render(); } }, 'Clear') : null));
     w.append(h('h2', {}, 'Send'), tray);
     // activity
     w.append(h('h2', {}, 'Activity', h('span', { class: 'sp' }), st.acts.some(a => isOver(a)) ? h('button', { class: 'btn sm', type: 'button', onclick: () => { st.acts = st.acts.filter(a => !isOver(a)); saveActs(); render(); } }, 'Clear finished') : null));
@@ -57,7 +71,7 @@
     const pct = a.size ? Math.min(100, Math.round(100 * (a.done || 0) / a.size)) : (a.state === 'done' ? 100 : 0); const acts = h('span', { class: 'acts' });
     if (!isOver(a)) acts.append(h('button', { class: 'ib', type: 'button', title: 'Cancel', 'aria-label': 'Cancel ' + a.name, html: IC.x, onclick: () => call('cancel', a.id) }));
     else if (a.dir === 'in' && a.state === 'done') { acts.append(h('button', { class: 'ib', type: 'button', title: 'Open', 'aria-label': 'Open ' + a.name, html: IC.open, onclick: () => call('open', a.id, a.ref || '') })); if (window.SRK_WINDOWS) acts.append(h('button', { class: 'ib', type: 'button', title: 'Show in folder', 'aria-label': 'Show in folder', html: IC.folder, onclick: () => call('showInFolder', a.ref || '') })); }
-    return h('div', { class: `tr ${a.dir} ${a.state}`, 'data-id': a.id }, h('span', { class: 'ic', html: a.dir === 'in' ? IC.down : IC.up }), h('b', {}, a.name), acts, h('span', { class: 'meta' }, metaOf(a)), !isOver(a) || a.state === 'done' ? h('div', { class: 'bar' }, h('i', { style: `width:${pct}%` })) : null); }
+    return h('div', { class: `tr ${a.dir} ${a.state}`, 'data-id': a.id }, h('span', { class: 'ic kind', html: badge(a.name) + `<span class="dir">${a.dir === 'in' ? IC.down : IC.up}</span>` }), h('b', {}, a.name), acts, h('span', { class: 'meta' }, metaOf(a)), !isOver(a) || a.state === 'done' ? h('div', { class: 'bar' }, h('i', { style: `width:${pct}%` })) : null); }
   const linkify = t => esc(t).replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
   function copy(t) { const done = () => toast('Copied'); try { navigator.clipboard.writeText(t).then(done, () => { call('copy', t); done(); }); } catch (e) { call('copy', t); done(); } }
   const saveSel = () => store.set('sel', [...st.sel]); let saveT; const saveActs = () => { clearTimeout(saveT); saveT = setTimeout(() => store.set('acts', st.acts.slice(0, 200).map(a => ({ ...a, speed: 0, state: isOver(a) ? a.state : 'failed', error: isOver(a) ? a.error : 'Stopped when the app closed' }))), 400); };
@@ -65,6 +79,11 @@
 
   /* ---------------------------------------------------------------- actions */
   function sendNow() { if (!st.files.length || !st.sel.size) return; call('send', JSON.stringify([...st.sel]), JSON.stringify(st.files.map(f => f.id)), ''); toast(`Sending to ${st.sel.size === 1 ? (st.peers.find(p => st.sel.has(p.id)) || {}).name : st.sel.size + ' devices'}…`); st.files = []; render(); }
+  function pickMenu(anchor) { const k = (n, i) => S(KINDS.find(x => x[1] === n)[3]); menu(anchor, [
+      { text: 'Photos & videos', icon: k('Photo'), fn: () => call('pickFiles', 'media') },
+      { text: 'Documents (PDF, Word, Excel, PowerPoint)', icon: k('Word'), fn: () => call('pickFiles', 'docs') },
+      { text: 'Music & audio', icon: k('Audio'), fn: () => call('pickFiles', 'audio') },
+      { text: 'Any file', icon: IC.file, fn: () => call('pickFiles', 'any') }]); }
   async function textDlg() { if (!st.sel.size) return toast('First tap who to send it to'); const t = h('textarea', { class: 'inp', rows: 5, placeholder: 'A message, link or anything you want to paste on the other device' }); const r = await dialog('Send text', t, [['Cancel'], ['Send', 'primary', () => t.value.trim() ? 'send' : false]]); if (r !== 'send') return; call('send', JSON.stringify([...st.sel]), '[]', t.value.trim()); }
   async function connectDlg() { const me = st.me || {}; const i = h('input', { class: 'inp', placeholder: '192.168.1.5', inputmode: 'decimal', autocomplete: 'off' });
     const r = await dialog('Connect by address', h('div', { style: 'display:flex;flex-direction:column;gap:10px' }, h('p', { class: 'hint' }, 'Use this when devices don’t find each other on their own (some office or hospital Wi-Fi blocks it). Type the other device’s address, shown under “This device” in its menu.'), i, h('p', { class: 'hint' }, 'This device’s address:'), h('div', { class: 'addr' }, (me.addrs || []).length ? me.addrs.join('  ·  ') : 'Not on Wi-Fi')), [['Cancel'], ['Connect', 'primary', () => i.value.trim() ? 'go' : false]]);

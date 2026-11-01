@@ -64,7 +64,7 @@ public final class AndroidHost implements ShareEngine.Host {
         return n.trim();
     }
     private static String cap(String s) { return s.isEmpty() ? s : Character.toUpperCase(s.charAt(0)) + s.substring(1); }
-    @Override public InputStream openSource(String ref) throws IOException { InputStream in = ctx.getContentResolver().openInputStream(Uri.parse(ref)); if (in == null) throw new IOException("can't read file"); return in; }
+    @Override public InputStream openSource(String ref) throws IOException { Uri u0 = Uri.parse(ref); if ("file".equals(u0.getScheme())) return new java.io.FileInputStream(u0.getPath()); InputStream in = ctx.getContentResolver().openInputStream(Uri.parse(ref)); if (in == null) throw new IOException("can't read file"); return in; }
 
     @Override public ShareEngine.Sink openSink(String name, String mime, long size) throws IOException {
         if (mime == null || mime.isEmpty()) { String ext = name.contains(".") ? name.substring(name.lastIndexOf('.') + 1).toLowerCase() : ""; mime = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext); if (mime == null) mime = "application/octet-stream"; }

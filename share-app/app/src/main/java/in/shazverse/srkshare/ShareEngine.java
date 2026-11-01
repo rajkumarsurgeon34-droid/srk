@@ -264,7 +264,11 @@ public final class ShareEngine {
         final boolean[] cancelled = {false}; final HttpURLConnection[] conn = {null};
         aborts.put(tid, () -> { cancelled[0] = true; transfer(Json.map("id", tid, "state", "cancelled", "error", "You cancelled it")); if (conn[0] != null) conn[0].disconnect(); pool.execute(() -> { try { http("POST", ip, p, "/srk/cancel?s=" + session, "{}", 5000); } catch (IOException ignored) { } }); });
         transfer(Json.map("id", tid, "state", "sending"));
-        try (InputStream in = host.openSource((String) f.get("ref"))) {
+        InputStream src;
+        try { src = host.openSource((String) f.get("ref")); }
+        catch (Exception e) { aborts.remove(tid); transfer(Json.map("id", tid, "state", "failed", "error", "Couldn’t read this file — pick it again"));
+            try { http("POST", ip, p, "/srk/upload?s=" + session + "&f=" + URLEncoder.encode(String.valueOf(f.get("id")), "UTF-8"), "", 5000); } catch (Exception ignored) { } return; } // tells the receiver this one isn't coming
+        try (InputStream in = src) {
             HttpURLConnection c = (HttpURLConnection) new URL("http://" + ip + ":" + p + "/srk/upload?s=" + session + "&f=" + URLEncoder.encode(String.valueOf(f.get("id")), "UTF-8")).openConnection(); conn[0] = c;
             c.setRequestMethod("POST"); c.setDoOutput(true); c.setConnectTimeout(8000); c.setReadTimeout(60000); c.setFixedLengthStreamingMode(size); c.setRequestProperty("Content-Type", "application/octet-stream"); c.setRequestProperty("Connection", "close");
             byte[] buf = new byte[256 * 1024];
@@ -272,6 +276,7 @@ public final class ShareEngine {
                     long now = System.currentTimeMillis(); if (now - last > 250) { double dt = (now - lastT) / 1000.0; if (dt > .4) { speed = (done - lastDone) / dt; lastDone = done; lastT = now; } last = now; progress(tid, done, size, speed); } } }
             int code = c.getResponseCode(); c.disconnect(); aborts.remove(tid);
             if (code == 200) transfer(Json.map("id", tid, "state", "done", "done", done)); else transfer(Json.map("id", tid, "state", code == 410 ? "cancelled" : "failed", "error", code == 410 ? "Cancelled by " + peerName : "Not accepted"));
+        } catch (RuntimeException e) { aborts.remove(tid); if (!cancelled[0]) transfer(Json.map("id", tid, "state", "failed", "error", "Couldn’t read this file"));
         } catch (IOException e) { aborts.remove(tid); if (!cancelled[0]) { String st = null; try { st = Json.s(Json.obj(http("GET", ip, p, "/srk/status?s=" + session + "&f=" + URLEncoder.encode(String.valueOf(f.get("id")), "UTF-8"), null, 4000)), "state"); } catch (IOException ignored) { }
             if ("cancelled".equals(st)) transfer(Json.map("id", tid, "state", "cancelled", "error", "Cancelled by " + peerName)); else transfer(Json.map("id", tid, "state", "failed", "error", "The connection dropped")); } }
     }

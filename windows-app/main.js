@@ -147,7 +147,8 @@ function notifyOffer(ev) { try { const { Notification } = require('electron'); c
 const shareCalls = {
   start: async () => { shareReady = true; await shareEngine().start(); const q = shareQueue.splice(0); const ws = shareWins(); for (const ev of q) for (const w of ws) w.win.webContents.executeJavaScript(`window.__shareEvent(${JSON.stringify(JSON.stringify(ev))})`).catch(() => { }); },
   setName: n => shareEngine().setName(n),
-  pickFiles: async (e) => { const r = await dialog.showOpenDialog(BrowserWindow.fromWebContents(e.sender), { title: 'Choose files to send', properties: ['openFile', 'multiSelections'] }); if (!r.canceled) shareEngine().addPaths(r.filePaths); },
+  pickFiles: async (e, kind) => { const F = { media: [{ name: 'Photos & videos', extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif', 'bmp', 'tif', 'tiff', 'mp4', 'mov', 'm4v', 'mkv', 'avi', '3gp', 'webm', 'wmv'] }], docs: [{ name: 'Documents', extensions: ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'xlsm', 'csv', 'ppt', 'pptx', 'txt', 'rtf', 'odt', 'ods', 'odp'] }], audio: [{ name: 'Music & audio', extensions: ['mp3', 'm4a', 'aac', 'wav', 'flac', 'ogg', 'opus', 'wma', 'amr'] }] }[kind];
+    const r = await dialog.showOpenDialog(BrowserWindow.fromWebContents(e.sender), { title: 'Choose files to send', properties: ['openFile', 'multiSelections'], filters: F ? [...F, { name: 'All files', extensions: ['*'] }] : [{ name: 'All files', extensions: ['*'] }] }); if (!r.canceled) shareEngine().addPaths(r.filePaths); },
   addPaths: (e, paths) => shareEngine().addPaths((paths || []).filter(Boolean)),
   forget: (e, id) => shareEngine().forget(id),
   send: (e, peers, files, text) => shareEngine().sendTo(JSON.parse(peers || '[]'), JSON.parse(files || '[]'), text || ''),
