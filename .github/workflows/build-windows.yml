@@ -79,6 +79,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "windows-v1.0.${{ github.run_number }}" windows-app/SRK-Office-Setup.exe \
+          (cd windows-app && 7z a -tzip selftest.zip ./selftest/* >/dev/null || true)
+          gh release create "windows-v1.0.${{ github.run_number }}" windows-app/SRK-Office-Setup.exe $( [ -f windows-app/selftest.zip ] && echo windows-app/selftest.zip ) \
             --title "SRK Office for Windows 1.0 (build ${{ github.run_number }})" \
             --notes "Download SRK-Office-Setup.exe and run it on Windows 10 or 11. It installs SRK, SRK Docs, SRK Slides, SRK Sheets and SRK Notes."
