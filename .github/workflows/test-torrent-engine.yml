@@ -39,8 +39,9 @@ jobs:
         shell: bash
         run: |
           SO=$(find "$PWD/lib" -name 'libtorrent4j.so' | head -1)
-          timeout 600 java -Dlibtorrent4j.jni.path="$SO" -cp out:lib/libtorrent4j.jar in.shazverse.srktorrent.SelfTest /tmp/st report.txt 2>&1 | tail -50
-          tail -3 report.txt
+          timeout 600 java -XX:ErrorFile=$PWD/hs_err_pid%p.log -Dlibtorrent4j.jni.path="$SO" -cp out:lib/libtorrent4j.jar in.shazverse.srktorrent.SelfTest /tmp/st report.txt 2>&1 | tail -50 || true
+          tail -3 report.txt || true
+          for f in hs_err_pid*.log; do [ -f "$f" ] && { echo "=== JVM crash log"; grep -E -A40 "^# Problematic frame|^Native frames|^Java frames" "$f" | head -120; } >> report.txt; done
           { echo "libtorrent4j $(cat LT4J_VERSION)"; echo "latest versions on Maven:"; cat versions.txt; } >> report.txt
           grep -q "RESULT .* 0 failed" report.txt
       - name: Report
