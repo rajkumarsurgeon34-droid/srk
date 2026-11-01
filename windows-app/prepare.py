@@ -2,7 +2,7 @@
 """Copy the five SRK web apps (the same offline files the Android apps ship) into windows-app/apps/<name>."""
 import os, shutil
 HERE = os.path.dirname(os.path.abspath(__file__)); ROOT = os.path.dirname(HERE)
-SRC = {'pdf': 'app', 'docs': 'docs-app/app', 'slides': 'slides-app/app', 'sheets': 'sheets-app/app', 'notes': 'notes-app/app', 'share': 'share-app/app'}
+SRC = {'pdf': 'app', 'docs': 'docs-app/app', 'slides': 'slides-app/app', 'sheets': 'sheets-app/app', 'notes': 'notes-app/app', 'share': 'share-app/app', 'torrent': 'torrent-app/app'}
 out = os.path.join(HERE, 'apps'); shutil.rmtree(out, ignore_errors=True)
 for k, d in SRC.items():
     src = os.path.join(ROOT, d, 'src', 'main', 'assets', 'www')

@@ -23,3 +23,11 @@ if (location.hostname === 'share') {
   contextBridge.exposeInMainWorld('SRKShare', api);
   window.addEventListener('drop', e => { try { const paths = [...e.dataTransfer.files].map(f => webUtils.getPathForFile(f)).filter(Boolean); if (paths.length) ipcRenderer.send('share:call', 'addPaths', [paths]); } catch (err) { } }, true);
 }
+
+/* SRK Torrent: only in its own window */
+if (location.hostname === 'torrent') {
+  const names = ['start', 'addMagnet', 'pickTorrent', 'addStaged', 'unstage', 'pause', 'resume', 'forceStart', 'pauseAll', 'resumeAll', 'remove', 'recheck', 'reannounce', 'setSequential', 'setFilePriority', 'setAllFiles', 'addTrackers', 'setLimits', 'queue', 'details', 'closeDetails', 'connectPeer', 'setSettings', 'copy', 'copyMagnet', 'paste', 'open', 'showInFolder', 'openDownloads', 'exportTorrent', 'chooseFolder', 'move', 'createPick', 'create', 'shareFile', 'quit'];
+  const api = {}; for (const n of names) api[n] = (...args) => { ipcRenderer.send('torrent:call', n, args); return 'ok'; };
+  contextBridge.exposeInMainWorld('SRKTorrent', api);
+  window.addEventListener('drop', e => { try { for (const f of [...e.dataTransfer.files]) { const p = webUtils.getPathForFile(f); if (p && /\.torrent$/i.test(p)) ipcRenderer.send('torrent:call', 'stageFile', [p]); } } catch (err) { } }, true);
+}

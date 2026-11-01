@@ -12,6 +12,8 @@
   CreateShortCut "$DESKTOP\SRK Sheets.lnk" "$INSTDIR\SRK Office.exe" "--app=sheets" "$INSTDIR\resources\icons\sheets.ico" 0
   CreateShortCut "$DESKTOP\SRK Notes.lnk" "$INSTDIR\SRK Office.exe" "--app=notes" "$INSTDIR\resources\icons\notes.ico" 0
   CreateShortCut "$DESKTOP\SRK Share.lnk" "$INSTDIR\SRK Office.exe" "--app=share" "$INSTDIR\resources\icons\share.ico" 0
+  CreateShortCut "$SMPROGRAMS\SRK Torrent.lnk" "$INSTDIR\SRK Office.exe" "--app=torrent" "$INSTDIR\resources\icons\torrent.ico" 0
+  CreateShortCut "$DESKTOP\SRK Torrent.lnk" "$INSTDIR\SRK Office.exe" "--app=torrent" "$INSTDIR\resources\icons\torrent.ico" 0
 !macroend
 !macro customInstall
   !insertmacro srkShortcuts
@@ -29,4 +31,6 @@
   Delete "$DESKTOP\SRK Notes.lnk"
   Delete "$SMPROGRAMS\SRK Share.lnk"
   Delete "$DESKTOP\SRK Share.lnk"
+  Delete "$SMPROGRAMS\SRK Torrent.lnk"
+  Delete "$DESKTOP\SRK Torrent.lnk"
 !macroend

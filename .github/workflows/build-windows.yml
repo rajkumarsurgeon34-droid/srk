@@ -3,7 +3,7 @@ name: Build SRK Office for Windows
 on:
   push:
     branches: [main]
-    paths: ['windows-app/**', 'app/src/main/assets/**', 'docs-app/app/src/main/assets/**', 'slides-app/app/src/main/assets/**', 'sheets-app/app/src/main/assets/**', 'notes-app/app/src/main/assets/**', 'share-app/app/src/main/assets/**', 'share-app/share-engine.js', '.github/workflows/build-windows.yml']
+    paths: ['windows-app/**', 'app/src/main/assets/**', 'docs-app/app/src/main/assets/**', 'slides-app/app/src/main/assets/**', 'sheets-app/app/src/main/assets/**', 'notes-app/app/src/main/assets/**', 'share-app/app/src/main/assets/**', 'share-app/share-engine.js', 'torrent-app/app/src/main/assets/**', 'torrent-engine/**', '.github/workflows/build-windows.yml']
   workflow_dispatch: {}
 
 permissions:
@@ -25,6 +25,36 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Build the torrent engine (libtorrent + small Java runtime)
+        shell: bash
+        run: |
+          set -e
+          V=$(cat torrent-engine/LT4J_VERSION); M=https://repo1.maven.org/maven2/org/libtorrent4j
+          mkdir -p windows-app/torrent lt && cd lt
+          curl -fsSL -o libtorrent4j.jar "$M/libtorrent4j/$V/libtorrent4j-$V.jar"
+          curl -fsSL -o win.jar "$M/libtorrent4j-windows/$V/libtorrent4j-windows-$V.jar"
+          unzip -o -q win.jar; DLL=$(find . -iname '*torrent4j*.dll' | head -1); echo "native: $DLL"; test -n "$DLL"
+          cp "$DLL" ../windows-app/torrent/libtorrent4j.dll; cp libtorrent4j.jar ../windows-app/torrent/
+          javac -encoding UTF-8 -cp libtorrent4j.jar -d out ../torrent-engine/src/in/shazverse/srktorrent/*.java
+          jar cf ../windows-app/torrent/srk-torrent.jar -C out .
+          jlink --add-modules java.base,java.logging --strip-debug --no-man-pages --no-header-files --compress=2 --output ../windows-app/torrent/jre
+          du -sh ../windows-app/torrent
+
+      - name: Test the torrent engine on Windows
+        shell: bash
+        working-directory: windows-app/torrent
+        run: |
+          code=0
+          timeout 600 ./jre/bin/java.exe -Dlibtorrent4j.jni.path="$(cygpath -w "$PWD/libtorrent4j.dll")" -cp "srk-torrent.jar;libtorrent4j.jar" in.shazverse.srktorrent.SelfTest "$RUNNER_TEMP/st" "$RUNNER_TEMP/torrent-test.txt" > /dev/null 2>&1 || code=$?
+          grep -v "^   \[" "$RUNNER_TEMP/torrent-test.txt" | tail -40 || true
+          echo "exit $code"
 
       - name: Download fonts
         shell: bash
@@ -59,6 +89,7 @@ jobs:
         run: |
           SRK_SELFTEST="$PWD/selftest" timeout 240 "dist/win-unpacked/SRK Office.exe" || true
           cat selftest/report.json || echo 'no report'
+          cp "$RUNNER_TEMP/torrent-test.txt" selftest/ 2>/dev/null || true
 
       - name: Upload test screenshots
         uses: actions/upload-artifact@v4
@@ -82,4 +113,4 @@ jobs:
           (cd windows-app && 7z a -tzip selftest.zip ./selftest/* >/dev/null || true)
           gh release create "windows-v1.0.${{ github.run_number }}" windows-app/SRK-Office-Setup.exe $( [ -f windows-app/selftest.zip ] && echo windows-app/selftest.zip ) \
             --title "SRK Office for Windows 1.0 (build ${{ github.run_number }})" \
-            --notes "Download SRK-Office-Setup.exe and run it on Windows 10 or 11. It installs SRK, SRK Docs, SRK Slides, SRK Sheets, SRK Notes and SRK Share."
+            --notes "Download SRK-Office-Setup.exe and run it on Windows 10 or 11. It installs SRK, SRK Docs, SRK Slides, SRK Sheets, SRK Notes, SRK Share and SRK Torrent."
