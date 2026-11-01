@@ -117,8 +117,14 @@ public final class VpnManager {
             state = "connecting"; lastError = null; emitStatus();
             try {
                 Meta m = meta(id); Config c = Tunnels.withApps(Tunnels.parse(text), m.mode, m.apps);
+                // WireGuard's own switch (down + up in one call) stops Android's VPN service and reuses it while it is still
+                // shutting down, which can then take the new connection down too. So: fully off, let the service stop, then on.
+                String cur = activeId;
+                if (cur != null) { activeId = null; try { backend().setState(tunnel(cur), Tunnel.State.DOWN, null); } catch (Exception ignored) { } Thread.sleep(1500); }
                 backend().setState(tunnel(id), Tunnel.State.UP, c);
                 activeId = id; since = System.currentTimeMillis(); state = "up"; prefs.edit().putString("last", id).apply();
+                Thread.sleep(1200);
+                if (backend().getState(tunnel(id)) != Tunnel.State.UP) { activeId = null; Thread.sleep(800); backend().setState(tunnel(id), Tunnel.State.UP, c); activeId = id; since = System.currentTimeMillis(); state = "up"; }
                 notifyConnected(m.name);
             } catch (BackendException e) { fail(why(e)); }
             catch (IllegalArgumentException e) { fail(e.getMessage()); }

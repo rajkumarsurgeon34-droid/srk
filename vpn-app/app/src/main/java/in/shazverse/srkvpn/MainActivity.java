@@ -199,6 +199,7 @@ public class MainActivity extends AppCompatActivity implements VpnManager.Listen
     }
     private void onEventBg(String j) { h.post(() -> onEvent(j)); }
 
+    private static String get(String url) throws Exception { URL u = new URL(url); try (java.net.Socket so = new java.net.Socket()) { so.connect(new java.net.InetSocketAddress(u.getHost(), u.getPort()), 4000); so.setSoTimeout(4000); so.getOutputStream().write(("GET " + u.getPath() + " HTTP/1.0\r\nHost: " + u.getHost() + "\r\n\r\n").getBytes(StandardCharsets.US_ASCII)); String r = new String(readAll(so.getInputStream(), 8192), StandardCharsets.UTF_8); int k2 = r.indexOf("\r\n\r\n"); return (k2 >= 0 ? r.substring(k2 + 4) : r).trim(); } }
     /* ---------- debug builds only: automated end-to-end test driven by the build machine ---------- */
     private void selfTest(Intent i) {
         new Thread(() -> {
@@ -211,11 +212,13 @@ public class MainActivity extends AppCompatActivity implements VpnManager.Listen
                 long hs = 0; for (int k = 0; k < 40 && hs == 0; k++) { Thread.sleep(500); Object v = vpn.status().get("handshake"); hs = v instanceof Number ? ((Number) v).longValue() : 0; }
                 Log.i(tag, "state " + vpn.status().get("state") + " handshake " + hs);
                 String body = "";
-                for (int k = 0; k < 5 && body.isEmpty(); k++) { try { URL u = new URL(url); try (java.net.Socket so = new java.net.Socket()) { so.connect(new java.net.InetSocketAddress(u.getHost(), u.getPort()), 4000); so.setSoTimeout(4000); so.getOutputStream().write(("GET " + u.getPath() + " HTTP/1.0\r\nHost: " + u.getHost() + "\r\n\r\n").getBytes(StandardCharsets.US_ASCII)); String r = new String(readAll(so.getInputStream(), 8192), StandardCharsets.UTF_8); int k2 = r.indexOf("\r\n\r\n"); body = (k2 >= 0 ? r.substring(k2 + 4) : r).trim(); } } catch (Exception e) { Log.i(tag, "http try " + k + " " + e); Thread.sleep(1000); } }
+                for (int k = 0; k < 5 && body.isEmpty(); k++) { try { body = get(url); } catch (Exception e) { Log.i(tag, "http try " + k + " " + e); Thread.sleep(1000); } }
                 Map<String, Object> st = vpn.status(); Log.i(tag, "http '" + body + "' rx " + st.get("rx") + " tx " + st.get("tx"));
-                vpn.setSplit(id, "exclude", java.util.Collections.singletonList("com.android.chrome")); Thread.sleep(3000); Log.i(tag, "after split state " + vpn.status().get("state"));
+                vpn.setSplit(id, "exclude", java.util.Collections.singletonList("com.android.chrome")); Thread.sleep(6000); String st2 = String.valueOf(vpn.status().get("state")); Log.i(tag, "after split state " + st2);
+                String body2 = ""; for (int k = 0; k < 5 && body2.isEmpty(); k++) { try { body2 = get(url); } catch (Exception e) { Log.i(tag, "http2 try " + k + " " + e); Thread.sleep(1000); } }
+                Log.i(tag, "after reconnect http '" + body2 + "'"); boolean reconnectOk = "up".equals(st2) && body2.contains("hello-through-srk-vpn");
                 vpn.disconnect(); Thread.sleep(1500); Log.i(tag, "after disconnect state " + vpn.status().get("state"));
-                Log.i(tag, (hs > 0 && body.contains("hello-through-srk-vpn") ? "DONE ok" : "DONE fail"));
+                String st3 = String.valueOf(vpn.status().get("state")); Log.i(tag, (hs > 0 && body.contains("hello-through-srk-vpn") && reconnectOk && "down".equals(st3) ? "DONE ok" : "DONE fail"));
             } catch (Throwable e) { Log.i(tag, "FAIL " + e); Log.i(tag, "DONE fail"); }
         }).start();
     }
