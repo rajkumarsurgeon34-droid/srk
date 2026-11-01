@@ -45,6 +45,17 @@ import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.webkit.WebViewAssetLoader;
 
+import com.google.mlkit.common.model.DownloadConditions;
+import com.google.mlkit.common.model.RemoteModelManager;
+import com.google.mlkit.vision.digitalink.DigitalInkRecognition;
+import com.google.mlkit.vision.digitalink.DigitalInkRecognitionModel;
+import com.google.mlkit.vision.digitalink.DigitalInkRecognitionModelIdentifier;
+import com.google.mlkit.vision.digitalink.DigitalInkRecognizer;
+import com.google.mlkit.vision.digitalink.DigitalInkRecognizerOptions;
+import com.google.mlkit.vision.digitalink.Ink;
+import com.google.mlkit.vision.digitalink.RecognitionContext;
+import com.google.mlkit.vision.digitalink.WritingArea;
+
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
@@ -54,6 +65,8 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.HashMap;
+import java.util.Map;
 
 public class MainActivity extends AppCompatActivity {
     private static final String HOST = "appassets.androidplatform.net";
@@ -541,6 +554,13 @@ public class MainActivity extends AppCompatActivity {
             }
         }
 
+        /* Ink to Text: recognise handwriting offline; lines of strokes come in as JSON, the text goes back through window.__srkInk(id, ok, payload) */
+        @JavascriptInterface
+        public String inkToText(final String id, final String json, final String lang) {
+            runOnUiThread(() -> recogniseInk(id, json, lang == null ? "en-IN" : lang));
+            return "ok";
+        }
+
         @JavascriptInterface
         public void ready() { runOnUiThread(MainActivity.this::deliverIncoming); }
 
@@ -599,6 +619,97 @@ public class MainActivity extends AppCompatActivity {
             if (tts != null) tts.stop();
             speechDone();
         }
+    }
+
+    /* ---------- handwriting recognition (ML Kit Digital Ink) ---------- */
+    private final Map<String, DigitalInkRecognizer> recognizers = new HashMap<>();
+
+    private DigitalInkRecognitionModelIdentifier inkModelFor(String lang) {
+        List<String> tags = new ArrayList<>();
+        tags.add(lang);
+        String base = lang.contains("-") ? lang.substring(0, lang.indexOf('-')) : lang;
+        tags.add(base);
+        if ("en".equals(base)) { tags.add("en-US"); }
+        for (String t : tags) {
+            try {
+                DigitalInkRecognitionModelIdentifier m = DigitalInkRecognitionModelIdentifier.fromLanguageTag(t);
+                if (m != null) return m;
+            } catch (Exception ignored) { }
+        }
+        return null;
+    }
+
+    private void recogniseInk(final String id, final String json, final String lang) {
+        try {
+            DigitalInkRecognitionModelIdentifier mid = inkModelFor(lang);
+            if (mid == null) { inkDone(id, false, "This handwriting language isn't available on the phone"); return; }
+            final DigitalInkRecognitionModel model = DigitalInkRecognitionModel.builder(mid).build();
+            final RemoteModelManager mm = RemoteModelManager.getInstance();
+            mm.isModelDownloaded(model)
+                .addOnSuccessListener(have -> {
+                    if (have) { runInk(id, json, model); return; }
+                    inkStatus("Downloading the handwriting model (one time, about 20 MB)…");
+                    mm.download(model, new DownloadConditions.Builder().build())
+                        .addOnSuccessListener(v -> { inkStatus("Handwriting model ready"); runInk(id, json, model); })
+                        .addOnFailureListener(e -> inkDone(id, false, "Couldn't download the handwriting model. Connect to the internet once and try again."));
+                })
+                .addOnFailureListener(e -> inkDone(id, false, String.valueOf(e.getMessage())));
+        } catch (Exception e) {
+            inkDone(id, false, String.valueOf(e.getMessage()));
+        }
+    }
+
+    private void runInk(final String id, final String json, final DigitalInkRecognitionModel model) {
+        try {
+            String key = model.getModelIdentifier().getLanguageTag();
+            DigitalInkRecognizer rec = recognizers.get(key);
+            if (rec == null) { rec = DigitalInkRecognition.getClient(DigitalInkRecognizerOptions.builder(model).build()); recognizers.put(key, rec); }
+            org.json.JSONArray lines = new org.json.JSONArray(json);
+            final int n = lines.length();
+            if (n == 0) { inkDone(id, true, "[]"); return; }
+            final String[] out = new String[n];
+            final int[] left = {n};
+            for (int i = 0; i < n; i++) {
+                org.json.JSONArray strokes = lines.getJSONArray(i);
+                Ink.Builder ib = Ink.builder();
+                float x1 = Float.MAX_VALUE, y1 = Float.MAX_VALUE, x2 = -Float.MAX_VALUE, y2 = -Float.MAX_VALUE;
+                for (int k = 0; k < strokes.length(); k++) {
+                    org.json.JSONArray pts = strokes.getJSONArray(k);
+                    Ink.Stroke.Builder sb = Ink.Stroke.builder();
+                    for (int j = 0; j < pts.length(); j++) {
+                        org.json.JSONArray p = pts.getJSONArray(j);
+                        float x = (float) p.getDouble(0), y = (float) p.getDouble(1);
+                        x1 = Math.min(x1, x); y1 = Math.min(y1, y); x2 = Math.max(x2, x); y2 = Math.max(y2, y);
+                        sb.addPoint(Ink.Point.create(x, y));
+                    }
+                    ib.addStroke(sb.build());
+                }
+                RecognitionContext ctx = RecognitionContext.builder().setPreContext("")
+                        .setWritingArea(new WritingArea(Math.max(10f, x2 - x1 + 20f), Math.max(10f, y2 - y1 + 20f))).build();
+                final int idx = i;
+                rec.recognize(ib.build(), ctx)
+                    .addOnSuccessListener(r -> { out[idx] = r.getCandidates().isEmpty() ? "" : r.getCandidates().get(0).getText(); if (--left[0] == 0) inkFinish(id, out); })
+                    .addOnFailureListener(e -> { out[idx] = ""; if (--left[0] == 0) inkFinish(id, out); });
+            }
+        } catch (Exception e) {
+            inkDone(id, false, String.valueOf(e.getMessage()));
+        }
+    }
+
+    private void inkFinish(String id, String[] out) {
+        org.json.JSONArray a = new org.json.JSONArray();
+        for (String t : out) a.put(t == null ? "" : t);
+        inkDone(id, true, a.toString());
+    }
+
+    private void inkDone(String id, boolean ok, String payload) {
+        final String js = "window.__srkInk && window.__srkInk(" + jsString(id) + "," + ok + "," + jsString(payload == null ? "" : payload) + ")";
+        runOnUiThread(() -> web.evaluateJavascript(js, null));
+    }
+
+    private void inkStatus(String msg) {
+        final String js = "window.__srkInkStatus && window.__srkInkStatus(" + jsString(msg) + ")";
+        runOnUiThread(() -> web.evaluateJavascript(js, null));
     }
 
     private void speechDone() {
