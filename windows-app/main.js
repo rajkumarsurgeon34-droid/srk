@@ -171,8 +171,8 @@ async function selftest(dir) {
     await new Promise(r => { win.webContents.once('did-finish-load', r); setTimeout(r, 15000); }); await wait(6000);
     let info = null; try { info = await win.webContents.executeJavaScript(`JSON.stringify({bridge: typeof window.SRKAndroid === 'object' && typeof SRKAndroid.saveFile, windows: !!window.SRK_WINDOWS, text: document.body.innerText.slice(0, 300), fonts: [...document.fonts].filter(f => f.status === 'loaded').length, idb: typeof indexedDB})`); } catch (e) { info = 'eval failed: ' + e.message; }
     try { const img = await win.webContents.capturePage(); fs.writeFileSync(path.join(dir, key + '.png'), img.toPNG()); } catch (e) { errs.push('capture ' + e.message); }
-    report[key] = { info, errors: errs }; win.destroy(); await wait(500);
+    report[key] = { info, errors: errs }; fs.writeFileSync(path.join(dir, 'report.json'), JSON.stringify(report, null, 2)); win.destroy(); await wait(800);
   }
   fs.writeFileSync(path.join(dir, 'report.json'), JSON.stringify(report, null, 2)); app.exit(0);
 }
-app.on('window-all-closed', () => app.quit());
+app.on('window-all-closed', () => { if (!process.env.SRK_SELFTEST) app.quit(); });
