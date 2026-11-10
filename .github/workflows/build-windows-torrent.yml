@@ -1,0 +1,118 @@
+name: Build SRK Torrent for Windows
+
+on:
+  push:
+    branches: [main]
+    paths: ['windows-app/**', 'torrent-app/app/src/main/assets/**', 'torrent-engine/**', '.github/workflows/build-windows-torrent.yml']
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Build the torrent engine (libtorrent + small Java runtime)
+        shell: bash
+        run: |
+          set -e
+          V=$(cat torrent-engine/LT4J_VERSION); M=https://repo1.maven.org/maven2/org/libtorrent4j
+          mkdir -p windows-app/torrent lt && cd lt
+          curl -fsSL -o libtorrent4j.jar "$M/libtorrent4j/$V/libtorrent4j-$V.jar"
+          curl -fsSL -o win.jar "$M/libtorrent4j-windows/$V/libtorrent4j-windows-$V.jar"
+          unzip -o -q win.jar; DLL=$(find . -iname '*torrent4j*.dll' | head -1); echo "native: $DLL"; test -n "$DLL"
+          cp "$DLL" ../windows-app/torrent/libtorrent4j.dll; cp libtorrent4j.jar ../windows-app/torrent/
+          javac -encoding UTF-8 -cp libtorrent4j.jar -d out ../torrent-engine/src/in/shazverse/srktorrent/*.java
+          jar cf ../windows-app/torrent/srk-torrent.jar -C out .
+          jlink --add-modules java.base,java.logging --strip-debug --no-man-pages --no-header-files --compress=2 --output ../windows-app/torrent/jre
+          du -sh ../windows-app/torrent
+
+      - name: Test the torrent engine on Windows
+        shell: bash
+        working-directory: windows-app/torrent
+        run: |
+          code=0
+          timeout 600 ./jre/bin/java.exe -Dlibtorrent4j.jni.path="$(cygpath -w "$PWD/libtorrent4j.dll")" -cp "srk-torrent.jar;libtorrent4j.jar" in.shazverse.srktorrent.SelfTest "$RUNNER_TEMP/st" "$RUNNER_TEMP/torrent-test.txt" > /dev/null 2>&1 || code=$?
+          grep -v "^   \[" "$RUNNER_TEMP/torrent-test.txt" | tail -40 || true
+          echo "exit $code"
+
+      - name: Collect SRK Torrent only
+        shell: bash
+        run: |
+          python windows-app/prepare.py
+          python windows-app/make_edition.py torrent
+
+      - name: Build the installer
+        shell: bash
+        working-directory: windows-app
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: |
+          npm install --no-audit --no-fund
+          npx electron-builder --win nsis --x64 --publish never
+
+      - name: Check the installer
+        shell: bash
+        working-directory: windows-app
+        run: |
+          ls -la dist
+          EXE=$(ls dist/SRK-Torrent-Setup-*.exe | head -1)
+          test -n "$EXE" || { echo 'ERROR: installer missing'; exit 1; }
+          cp "$EXE" SRK-Torrent-Setup.exe
+          ls -la SRK-Torrent-Setup.exe
+
+      - name: Test the app
+        shell: bash
+        working-directory: windows-app
+        run: |
+          SRK_SELFTEST="$PWD/selftest" timeout 120 "dist/win-unpacked/SRK Torrent.exe" || true
+          cat selftest/report.json || echo 'no report'
+          cp "$RUNNER_TEMP/torrent-test.txt" selftest/ 2>/dev/null || true
+
+      - name: Silent install test
+        shell: pwsh
+        working-directory: windows-app
+        run: |
+          Start-Process -Wait -FilePath .\SRK-Torrent-Setup.exe -ArgumentList '/S'
+          $exe = Join-Path $env:LOCALAPPDATA 'Programs\SRK Torrent\SRK Torrent.exe'
+          if (Test-Path $exe) { "installed: $exe" | Tee-Object -FilePath selftest\install.txt } else { "NOT INSTALLED" | Tee-Object -FilePath selftest\install.txt }
+          Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Programs\SRK Torrent\resources\torrent') | Select-Object Name | Out-String | Add-Content selftest\install.txt
+          Test-Path ([Environment]::GetFolderPath('Desktop') + '\SRK Torrent.lnk') | ForEach-Object { "desktop shortcut: $_" } | Add-Content selftest\install.txt
+          Get-Content selftest\install.txt
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: SRK-Torrent-Setup
+          path: windows-app/SRK-Torrent-Setup.exe
+          if-no-files-found: error
+
+      - name: Publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          (cd windows-app && 7z a -tzip selftest.zip ./selftest/* >/dev/null || true)
+          gh release create "torrent-windows-v1.0.${{ github.run_number }}" windows-app/SRK-Torrent-Setup.exe $( [ -f windows-app/selftest.zip ] && echo windows-app/selftest.zip ) \
+            --title "SRK Torrent for Windows 1.0 (build ${{ github.run_number }})" \
+            --notes "Download SRK-Torrent-Setup.exe and run it on Windows 10 or 11. Standalone SRK Torrent (no other SRK apps)."

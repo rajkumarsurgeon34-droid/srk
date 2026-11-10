@@ -15,10 +15,14 @@ const APPS = {
   torrent: { name: 'SRK Torrent', color: '#B3245B', exts: ['torrent'] },
 };
 const MIME = { html: 'text/html; charset=utf-8', js: 'text/javascript; charset=utf-8', css: 'text/css; charset=utf-8', json: 'application/json', txt: 'text/plain; charset=utf-8', svg: 'image/svg+xml', png: 'image/png', jpg: 'image/jpeg', woff2: 'font/woff2', woff: 'font/woff', ttf: 'font/ttf', wasm: 'application/wasm', map: 'application/json' };
+/* A single-app edition (e.g. the standalone SRK Torrent installer) ships an edition.json naming the one app it keeps */
+let EDITION = null; try { EDITION = require('./edition.json'); } catch (e) { }
+if (EDITION && APPS[EDITION.only]) for (const k of Object.keys(APPS)) if (k !== EDITION.only) delete APPS[k];
+const PRODUCT = EDITION ? APPS[EDITION.only].name : 'SRK Office';
 const iconPath = k => app.isPackaged ? path.join(process.resourcesPath, 'icons', k + '.ico') : path.join(__dirname, 'build', 'icons', k + '.ico');
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'srk', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true, codeCache: true } }]);
-app.setAppUserModelId('in.shazverse.srkoffice');
+app.setAppUserModelId(EDITION && EDITION.appId || 'in.shazverse.srkoffice');
 
 if (!app.requestSingleInstanceLock()) { app.quit(); }
 
@@ -79,6 +83,7 @@ function route(argv) {
   const { key, file, magnet } = parseArgs(argv);
   if (key === 'torrent') { openApp('torrent'); if (file) torrent.call('stageFile', file); if (magnet) torrent.ui({ type: 'incomingMagnet', uri: magnet }); }
   else if (key) openApp(key, file);
+  else if (EDITION) openApp(EDITION.only);
   else if (!wins.size) openLauncher();
   else { const w = [...wins.values()][0].win; if (w.isMinimized()) w.restore(); w.focus(); }
 }
@@ -133,7 +138,7 @@ ipcMain.on('srk:pickAndOpen', async e => {
 });
 
 /* ---------- SRK Share: nearby file sharing (same protocol as the Android app) ---------- */
-const { ShareEngine } = require('./share-engine.js');
+const { ShareEngine } = APPS.share ? require('./share-engine.js') : { ShareEngine: null };
 let share = null; const shareQueue = []; let shareReady = false;
 function shareWins() { return [...wins.values()].filter(w => w.key === 'share' && !w.win.isDestroyed()); }
 function shareEngine() {
@@ -188,7 +193,7 @@ const torrent = (() => {
     if (proc || quitting) return;
     const java = path.join(base, 'jre', 'bin', process.platform === 'win32' ? 'java.exe' : 'java');
     const dll = path.join(base, process.platform === 'win32' ? 'libtorrent4j.dll' : 'libtorrent4j.so');
-    if (!fs.existsSync(java)) { ui({ type: 'toast', msg: 'The torrent engine is missing — reinstall SRK Office' }); return; }
+    if (!fs.existsSync(java)) { ui({ type: 'toast', msg: 'The torrent engine is missing — reinstall ' + PRODUCT }); return; }
     const data = path.join(app.getPath('userData'), 'torrent'); fs.mkdirSync(data, { recursive: true });
     const save = path.join(app.getPath('downloads'), 'SRK Torrent');
     const cp = [path.join(base, 'srk-torrent.jar'), path.join(base, 'libtorrent4j.jar')].join(path.delimiter);
@@ -270,7 +275,7 @@ app.whenReady().then(() => {
     { label: 'File', submenu: [{ label: 'Open a file…', accelerator: 'CmdOrCtrl+Shift+O', click: () => ipcMain.emit('srk:pickAndOpen', { sender: null }) }, { type: 'separator' }, ...Object.entries(APPS).map(([k, a]) => ({ label: 'Open ' + a.name, click: () => openApp(k) })), { type: 'separator' }, { role: 'quit', label: 'Exit' }] },
     { label: 'Edit', submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }] },
     { label: 'View', submenu: [{ role: 'reload' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { type: 'separator' }, { role: 'togglefullscreen' }, { role: 'toggleDevTools', label: 'Developer tools' }] },
-    { label: 'Help', submenu: [{ label: 'About SRK Office', click: () => dialog.showMessageBox({ title: 'SRK Office', message: 'SRK Office ' + app.getVersion(), detail: 'SRK, SRK Docs, SRK Slides, SRK Sheets, SRK Notes, SRK Share and SRK Torrent for Windows.\nShazVerse Technologies' }) }] },
+    { label: 'Help', submenu: [{ label: 'About ' + PRODUCT, click: () => dialog.showMessageBox({ title: PRODUCT, message: PRODUCT + ' ' + app.getVersion(), detail: (EDITION ? PRODUCT : 'SRK, SRK Docs, SRK Slides, SRK Sheets, SRK Notes, SRK Share and SRK Torrent') + ' for Windows.\nShazVerse Technologies' }) }] },
   ]));
   if (process.env.SRK_SELFTEST) selftest(process.env.SRK_SELFTEST); else route(process.argv);
 });
