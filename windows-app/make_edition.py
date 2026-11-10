@@ -41,6 +41,7 @@ b['nsis'] = {
     'createDesktopShortcut': True, 'createStartMenuShortcut': True, 'shortcutName': E['name'],
     'installerIcon': f'build/icons/{key}.ico', 'uninstallerIcon': f'build/icons/{key}.ico',
     'uninstallDisplayName': E['name'], 'deleteAppDataOnUninstall': False,
+    'include': 'build/edition-installer.nsh',
 }
 b['fileAssociations'] = E['files']
 b['protocols'] = E['protocols']

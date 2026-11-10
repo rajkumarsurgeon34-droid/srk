@@ -93,12 +93,20 @@ jobs:
         shell: pwsh
         working-directory: windows-app
         run: |
+          New-Item -ItemType Directory -Force selftest | Out-Null
+          $ws = New-Object -ComObject WScript.Shell
+          $sm = Join-Path ([Environment]::GetFolderPath('StartMenu')) 'Programs\SRK Torrent.lnk'
+          $dt = Join-Path ([Environment]::GetFolderPath('Desktop')) 'SRK Torrent.lnk'
+          foreach ($l in @($sm, $dt)) { $s = $ws.CreateShortcut($l); $s.TargetPath = 'C:\Old\SRK Office.exe'; $s.Arguments = '--app=torrent'; $s.Save() }
+          "stale before: $($ws.CreateShortcut($sm).TargetPath)"
           Start-Process -Wait -FilePath .\SRK-Torrent-Setup.exe -ArgumentList '/S'
           $exe = Join-Path $env:LOCALAPPDATA 'Programs\SRK Torrent\SRK Torrent.exe'
           if (Test-Path $exe) { "installed: $exe" | Tee-Object -FilePath selftest\install.txt } else { "NOT INSTALLED" | Tee-Object -FilePath selftest\install.txt }
           Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Programs\SRK Torrent\resources\torrent') | Select-Object Name | Out-String | Add-Content selftest\install.txt
           Test-Path ([Environment]::GetFolderPath('Desktop') + '\SRK Torrent.lnk') | ForEach-Object { "desktop shortcut: $_" } | Add-Content selftest\install.txt
+          foreach ($l in @($sm, $dt)) { "shortcut $l -> $($ws.CreateShortcut($l).TargetPath) [$($ws.CreateShortcut($l).Arguments)]" | Add-Content selftest\install.txt }
           Get-Content selftest\install.txt
+          if ($ws.CreateShortcut($sm).TargetPath -notlike '*SRK Torrent.exe' -or $ws.CreateShortcut($dt).TargetPath -notlike '*SRK Torrent.exe') { Write-Error 'shortcut still points at the wrong exe'; exit 1 }
 
       - name: Upload installer
         uses: actions/upload-artifact@v4
