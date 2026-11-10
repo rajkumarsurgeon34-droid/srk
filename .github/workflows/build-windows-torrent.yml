@@ -99,8 +99,12 @@ jobs:
           $dt = Join-Path ([Environment]::GetFolderPath('Desktop')) 'SRK Torrent.lnk'
           foreach ($l in @($sm, $dt)) { $s = $ws.CreateShortcut($l); $s.TargetPath = 'C:\Old\SRK Office.exe'; $s.Arguments = '--app=torrent'; $s.Save() }
           "stale before: $($ws.CreateShortcut($sm).TargetPath)"
-          Start-Process -Wait -FilePath .\SRK-Torrent-Setup.exe -ArgumentList '/S'
+          $p = Start-Process -Wait -PassThru -FilePath .\SRK-Torrent-Setup.exe -ArgumentList '/S'
+          "installer exit code: $($p.ExitCode)"
           $exe = Join-Path $env:LOCALAPPDATA 'Programs\SRK Torrent\SRK Torrent.exe'
+          for ($i = 0; $i -lt 90 -and -not (Test-Path $exe); $i++) { Start-Sleep 2 }
+          Start-Sleep 5
+          Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Programs') -ErrorAction SilentlyContinue | Select-Object Name | Out-String
           if (Test-Path $exe) { "installed: $exe" | Tee-Object -FilePath selftest\install.txt } else { "NOT INSTALLED" | Tee-Object -FilePath selftest\install.txt }
           Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Programs\SRK Torrent\resources\torrent') | Select-Object Name | Out-String | Add-Content selftest\install.txt
           Test-Path ([Environment]::GetFolderPath('Desktop') + '\SRK Torrent.lnk') | ForEach-Object { "desktop shortcut: $_" } | Add-Content selftest\install.txt
