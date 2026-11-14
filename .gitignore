@@ -10,3 +10,6 @@ notes-app/app/src/main/assets/www/fonts/
 windows-app/node_modules/
 windows-app/dist/
 windows-app/apps/
+
+# graphify knowledge graph (rebuilt automatically at session start)
+graphify-out/
