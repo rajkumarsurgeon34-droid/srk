@@ -13,3 +13,7 @@ windows-app/apps/
 
 # graphify knowledge graph (rebuilt automatically at session start)
 graphify-out/
+
+# Signing keys: only the encrypted signing/srk-release.keystore.enc belongs in git
+*.keystore
+*.jks

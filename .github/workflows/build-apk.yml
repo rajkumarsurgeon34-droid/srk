@@ -27,8 +27,24 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      - name: Prepare signing key
+        shell: bash
+        env:
+          SRK_KEY_PASSWORD: ${{ secrets.SRK_SIGNING_PASSWORD }}
+        run: |
+          if [ -z "$SRK_KEY_PASSWORD" ]; then
+            echo "::error::Missing secret SRK_SIGNING_PASSWORD (repo Settings > Secrets and variables > Actions)"
+            exit 1
+          fi
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 \
+            -in "$GITHUB_WORKSPACE/signing/srk-release.keystore.enc" \
+            -out "$RUNNER_TEMP/srk-release.keystore" -pass env:SRK_KEY_PASSWORD
+          echo "SRK_KEYSTORE=$RUNNER_TEMP/srk-release.keystore" >> "$GITHUB_ENV"
+
       - name: Build APK
         shell: bash
+        env:
+          SRK_KEY_PASSWORD: ${{ secrets.SRK_SIGNING_PASSWORD }}
         run: |
           set -o pipefail
           gradle assembleRelease --console=plain 2>&1 | tee build.log

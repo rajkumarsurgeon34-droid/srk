@@ -2,6 +2,9 @@ plugins {
     id 'com.android.application'
 }
 
+def srkKeystore = System.getenv('SRK_KEYSTORE')
+def srkBuild = (System.getenv('GITHUB_RUN_NUMBER') ?: '0').toInteger()
+
 android {
     namespace 'in.shazverse.srk'
     compileSdk 35
@@ -10,27 +13,30 @@ android {
         applicationId 'in.shazverse.srk'
         minSdk 23
         targetSdk 35
-        versionCode 1
-        versionName '1.0'
+        versionCode(100 + srkBuild)   // goes up with every GitHub build
+        versionName "1.0.${srkBuild}"   // matches the release tag
     }
 
-    // A fixed key, so every new build installs over the old one without uninstalling
+    // Release key: decrypted by GitHub Actions from signing/srk-release.keystore.enc
+    // using the SRK_SIGNING_PASSWORD secret. Never commit a plain keystore or password.
     signingConfigs {
         srk {
-            storeFile file('srk.keystore')
-            storePassword 'srk-store-2026'
-            keyAlias 'srk'
-            keyPassword 'srk-store-2026'
+            if (srkKeystore) {
+                storeFile file(srkKeystore)
+                storePassword System.getenv('SRK_KEY_PASSWORD')
+                keyAlias 'srk'
+                keyPassword System.getenv('SRK_KEY_PASSWORD')
+            }
         }
     }
 
     buildTypes {
         release {
             minifyEnabled false
-            signingConfig signingConfigs.srk
+            signingConfig(srkKeystore ? signingConfigs.srk : signingConfigs.debug)
         }
         debug {
-            signingConfig signingConfigs.srk
+            if (srkKeystore) signingConfig signingConfigs.srk
         }
     }
 
