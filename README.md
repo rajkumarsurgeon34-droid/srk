@@ -1,4 +1,4 @@
-# SRK
+# SRK PDF
 
 PDF reader and toolkit for Android by ShazVerse Technologies.
 

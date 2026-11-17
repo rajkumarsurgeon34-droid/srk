@@ -1,4 +1,4 @@
-name: Build SRK Android APK
+name: Build SRK PDF Android APK
 
 on:
   push:
@@ -76,5 +76,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "v1.0.${{ github.run_number }}" SRK.apk \
-            --title "SRK 1.0 (build ${{ github.run_number }})" \
+            --title "SRK PDF 1.0 (build ${{ github.run_number }})" \
             --notes "Download SRK.apk below and open it on your Android phone to install."
